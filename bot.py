@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 from logging.handlers import RotatingFileHandler
 import httpx
 from bs4 import BeautifulSoup
@@ -19,6 +19,7 @@ from pystyle import Colorate, Colors, Center
 from dotenv import load_dotenv
 from telegram.error import BadRequest
 import sys
+import subprocess
 
 load_dotenv()
 
@@ -59,9 +60,15 @@ except ValueError:
 
 ALLOWED_USERS_FILE = 'allowed_users.json'
 
+# Кэш расписания
 schedule_cache = {}
-cache_expiry = 60 * 60 * 12 
+cache_expiry = 60 * 30 # 30 минут
 last_fetch_time = 0
+
+# Кэш преподавателей
+teachers_cache = {}  
+teachers_cache_expiry = 24 * 60 * 60  # 24 часа
+last_teachers_fetch_time = 0
 
 STATS_FILE = 'stats.json'
 
@@ -125,7 +132,6 @@ def is_mod_or_admin(user_id: int) -> bool:
 def set_user_role(user_id: int, role: str):
     if user_id == OWNER_ID:
         return
-
     if role in ["admin", "mod", "user"]:
         allowed_users[str(user_id)] = role
     else:
@@ -216,6 +222,183 @@ async def notify_admin(application, message: str):
     except Exception as e:
         logger.error(f"Не удалось уведомить администратора: {e}")
 
+# ----------------------------------------- парсинг преподав -----------------------------------------------
+async def fetch_teachers(application):
+
+    global teachers_cache, last_teachers_fetch_time
+    current_time = time.time()
+    if current_time - last_teachers_fetch_time < teachers_cache_expiry and teachers_cache:
+        logger.info("Используется кэш преподавателей (до 24 часов).")
+        return teachers_cache
+
+    logger.info("Обновление списка преподавателей с сайта...")
+    teachers_cache = {} 
+    last_teachers_fetch_time = current_time
+
+    main_url = "https://timetable.pallada.sibsau.ru/timetable/"
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response_main = await client.get(main_url)
+            response_main.raise_for_status()
+        except httpx.RequestError as e:
+            logger.error(f"Ошибка при получении страницы (main_url): {e}")
+            await notify_admin(application, f"Ошибка при получении страницы (main_url): {e}")
+            return teachers_cache
+
+        url = os.getenv("SCHEDULE_URL")
+        try:
+            response_schedule = await client.get(url)
+            response_schedule.raise_for_status()
+        except httpx.RequestError as e:
+            logger.error(f"Ошибка при получении списка преподавателей: {e}")
+            await notify_admin(application, f"Ошибка при получении списка преподавателей: {e}")
+            return teachers_cache
+
+        soup = BeautifulSoup(response_schedule.text, "html.parser")
+        professor_links = soup.find_all("a", href=re.compile(r"/timetable/professor/\d+"))
+        logger.info(f"Найдено ссылок на преподавателей: {len(professor_links)}")
+
+        for link in professor_links:
+            full_name = link.get_text(strip=True)
+            href = link.get("href")
+            match = re.search(r'professor/(\d+)', href)
+            if match:
+                teacher_id = match.group(1)
+                teachers_cache[teacher_id] = {
+                    "name": full_name,
+                    "href": f"https://timetable.pallada.sibsau.ru{href}",
+                    "pairs": {},
+                    "consultations": []
+                }
+
+    logger.info("Список преподавателей успешно обновлён.")
+    return teachers_cache
+
+# ----------------------------------------- Парсинг консультаций препода -----------------------------------------------
+async def fetch_consultations_for_teacher(teacher_id: str) -> list:
+    """
+    [
+      {
+        "date": "...",
+        "time": "...",
+        "info": "..."
+      },
+      ...
+    ]
+    """
+    consultations = []
+    try:
+        url = f"https://timetable.pallada.sibsau.ru/timetable/professor/{teacher_id}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        consultation_tab = soup.find("div", {"id": "consultation_tab"})
+        if not consultation_tab:
+            return consultations
+
+        day_blocks = consultation_tab.find_all("div", class_="day")
+        for day_block in day_blocks:
+            date_div = day_block.find("div", class_="name")
+            if not date_div:
+                continue
+
+            date_text = date_div.get_text(strip=True)
+            lines = day_block.find_all("div", class_="line")
+            for line_ in lines:
+                time_div = line_.find("div", class_="time")
+                discipline_div = line_.find("div", class_="discipline")
+                if not time_div or not discipline_div:
+                    continue
+
+                time_text_raw = time_div.get_text(separator=' ', strip=True)
+                match_time = re.search(r'\d{2}:\d{2}(?:-\d{2}:\d{2})?', time_text_raw)
+                if match_time:
+                    time_text = match_time.group(0)
+                else:
+                    time_text = time_text_raw
+
+                discipline_info = discipline_div.get_text(separator="\n", strip=True)
+
+                consultations.append({
+                    "date": date_text,
+                    "time": time_text,
+                    "info": discipline_info
+                })
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении консультаций для преподавателя {teacher_id}: {e}")
+
+    return consultations
+
+# -------------------------------------------- Парсинг пар препода по дням --------------------------------------------
+async def fetch_pairs_for_teacher(teacher_id: str) -> dict:
+    """
+    Возвращает:
+    {
+      'Понедельник': [ { 'time': '...', 'info': '...' }, ... ],
+      ...
+    }
+    """
+    result = {
+        'Понедельник': [],
+        'Вторник': [],
+        'Среда': [],
+        'Четверг': [],
+        'Пятница': [],
+        'Суббота': [],
+        'Воскресенье': []
+    }
+    try:
+        url = f"https://timetable.pallada.sibsau.ru/timetable/professor/{teacher_id}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        day_blocks = soup.find_all("div", class_="day")
+        for day_block in day_blocks:
+            day_classes = day_block.get("class", [])
+            day_classes_lower = [c.lower() for c in day_classes]
+            weekday_class = next(
+                (c for c in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] 
+                 if c in day_classes_lower), 
+                None
+            )
+            if not weekday_class:
+                continue
+            day_name_en = weekday_class.capitalize()
+            day_name_ru = WEEKDAYS.get(day_name_en, day_name_en)
+
+            lines = day_block.find_all("div", class_="line")
+            for line_ in lines:
+                time_div = line_.find("div", class_="time")
+                discipline_div = line_.find("div", class_="discipline")
+                if not time_div or not discipline_div:
+                    continue
+                time_text_raw = time_div.get_text(separator=' ', strip=True)
+                match_time = re.search(r'\d{2}:\d{2}(?:-\d{2}:\d{2})?', time_text_raw)
+                if match_time:
+                    time_text = match_time.group(0)
+                else:
+                    time_text = time_text_raw
+
+                discipline_info = discipline_div.get_text(separator="\n", strip=True)
+                result[day_name_ru].append({
+                    "time": time_text,
+                    "info": discipline_info
+                })
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении пар для преподавателя {teacher_id}: {e}")
+
+    return result
+
+# --------------------------------------- Основной парсинг расписания ----------------------------------------
 async def fetch_schedule(application):
     global schedule_cache, last_fetch_time
     current_time = time.time()
@@ -225,6 +408,7 @@ async def fetch_schedule(application):
         return schedule_cache
 
     logger.info("Обновление расписания с сайта.")
+    schedule = {}
 
     async with httpx.AsyncClient(timeout=30) as client:
         try:
@@ -236,7 +420,6 @@ async def fetch_schedule(application):
             return schedule_cache
 
     soup = BeautifulSoup(response.content, "html.parser")
-    schedule = {}
 
     try:
         for week_num in [1, 2]:
@@ -255,14 +438,17 @@ async def fetch_schedule(application):
             for day in days:
                 day_classes = day.get("class", [])
                 day_classes_lower = [c.lower() for c in day_classes]
-                weekday_class = next((c for c in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] if c in day_classes_lower), None)
+                weekday_class = next(
+                    (c for c in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] 
+                     if c in day_classes_lower), 
+                    None
+                )
                 if not weekday_class:
                     continue
                 day_name_en = weekday_class.capitalize()
                 day_name_ru = WEEKDAYS.get(day_name_en, day_name_en)
 
                 is_today = 'today' in day_classes_lower
-
                 if is_today:
                     schedule[week_key]['_today_day'] = day_name_ru
 
@@ -279,13 +465,13 @@ async def fetch_schedule(application):
                         time_text = match.group(0)
                     else:
                         time_text = time_text_raw
+
                     discipline_info = discipline_div.get_text(separator="\n", strip=True)
                     lesson_entry = {
                         "time": time_text,
                         "info": discipline_info
                     }
                     schedule[week_key][day_name_ru].append(lesson_entry)
-                    logger.debug(f"Добавлено занятие: {lesson_entry} в неделю {week_key}, день {day_name_ru}")
 
             for day in EXPECTED_DAYS:
                 day_ru = WEEKDAYS[day]
@@ -321,7 +507,6 @@ async def fetch_schedule(application):
                         "info": discipline_info
                     }
                     schedule["session"][day_name_ru].append(lesson_entry)
-                    logger.debug(f"Добавлено занятие: {lesson_entry} в сессию, день {day_name_ru}")
         else:
             schedule["session"] = {}
             for day in EXPECTED_DAYS:
@@ -375,6 +560,8 @@ def print_startup_messages():
     """
     print(Colorate.Vertical(Colors.red_to_yellow, Center.XCenter(ascii_art)))
 
+# --------------------------- Команды бота ---------------------------
+
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -388,7 +575,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     save_stats()
 
     role = get_user_role(user_id)
-
     if not is_user_allowed(user_id):
         stats['commands_executed'] += 1
         save_stats()
@@ -400,7 +586,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             owner_username = "администратору"
 
         await update.message.reply_text(
-            f"Ваш ID: {user_id}\n\nДля использования бота сообщите ваш ID администратору {owner_username}.\n\nРазработчик @lssued"
+            f"Ваш ID: {user_id}\n\n"
+            f"Для использования бота сообщите ваш ID администратору {owner_username}.\n\n"
+            "Разработчик @lssued"
         )
         return
 
@@ -423,10 +611,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [
             InlineKeyboardButton("Сегодня", callback_data='today'),
             InlineKeyboardButton("Завтра", callback_data='tomorrow')
+        ],
+        [
+            InlineKeyboardButton("Преподаватели", callback_data='teachers_list')
         ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(welcome_message, reply_markup=reply_markup)
+    await update.message.reply_text(welcome_message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # /broadcast
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -467,7 +657,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     save_stats()
     await update.message.reply_text(f"Объявление отправлено: успешно {success_count}, не удалось {failure_count}.")
 
-
 # /plan
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -479,15 +668,14 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     stats['commands_executed'] += 1
     save_stats()
-
     plan_message = f"Учебный план: {PLAN_URL}"
     await update.message.reply_text(plan_message)
 
-# Выбор недели
+# ---------------- Обработчики кнопок  ----------------
+
 async def week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
     week = query.data
     application = context.application
     schedule = await fetch_schedule(application)
@@ -522,12 +710,10 @@ async def week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             logger.error(f"Ошибка при редактировании сообщения: {e}")
             await notify_admin(application, f"Ошибка при редактировании сообщения: {e}")
 
-# Сегодня
 async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     application = context.application
-
     date_str, day_name, current_week = get_current_week_and_day()
     schedule = await fetch_schedule(application)
     stats['schedule_requests'] += 1
@@ -544,10 +730,8 @@ async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if '_today_day' in schedule[current_week]:
         day_name_today = schedule[current_week]['_today_day']
-        logger.debug(f"Используем день с классом 'today': {day_name_today}")
     else:
         day_name_today = day_name
-        logger.debug(f"Используем день по дате: {day_name_today}")
 
     lessons = schedule[current_week].get(day_name_today, [])
     if not lessons:
@@ -562,7 +746,6 @@ async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Завтра
 async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -585,8 +768,6 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if '_today_day' in schedule[current_week]:
         today_day_ru = schedule[current_week]['_today_day']
         tomorrow_day_ru = get_next_day_ru(today_day_ru)
-        logger.debug(f"Используем день с классом 'today': {today_day_ru}, завтрашний день: {tomorrow_day_ru}")
-
         if tomorrow_day_ru == 'Понедельник':
             next_week = 'week_2' if current_week == 'week_1' else 'week_1'
             date_obj = datetime.datetime.strptime(date_str, '%d.%m.%Y').date() + datetime.timedelta(days=1)
@@ -602,7 +783,6 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         tomorrow_day_ru = day_name_ru
         lessons = schedule[current_week].get(tomorrow_day_ru, [])
         new_date_str = date_str_tomorrow
-        logger.debug(f"Используем день по дате: {tomorrow_day_ru}")
 
     if not lessons:
         message = f"Расписание на {tomorrow_day_ru} отсутствует."
@@ -614,7 +794,6 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     keyboard = [[InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')]]
     await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Сессия
 async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -641,10 +820,10 @@ async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 message += f"⏰ {lesson['time']}\n📅 {lesson['info']}\n\n"
         else:
             message += "Расписание отсутствует.\n\n"
+
     keyboard = [[InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')]]
     await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Выбор дня
 async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -680,7 +859,6 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     keyboard = [[InlineKeyboardButton("⬅ Назад к неделям", callback_data='back_to_week')]]
     await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Назад
 async def back_to_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -701,13 +879,152 @@ async def back_to_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         [
             InlineKeyboardButton("Сегодня", callback_data='today'),
             InlineKeyboardButton("Завтра", callback_data='tomorrow')
+        ],
+        [
+            InlineKeyboardButton("Преподаватели", callback_data='teachers_list')
         ]
     ]
     await query.edit_message_text(welcome_message, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Обработчик ошибок
+# ------------------------- Преподаватели -------------------------
+async def teachers_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    if not is_user_allowed(user_id):
+        await query.edit_message_text("У вас нет доступа к информации о преподавателях.")
+        return
+
+    application = context.application
+    await fetch_teachers(application)
+
+    keyboard = []
+    limit = 100  # ограничение по преподам в телге макс 100
+    count = 0
+    for teacher_id, data in teachers_cache.items():
+        name = data["name"]
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"teacher_{teacher_id}")])
+        count += 1
+        if count >= limit:
+            break
+
+    keyboard.append([InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')])
+
+    await query.edit_message_text(
+        text="Список преподавателей. \n\nВыберите преподавателя:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def teacher_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    if not is_user_allowed(user_id):
+        await query.edit_message_text("У вас нет доступа к этой функции.")
+        return
+
+    data = query.data
+    _, teacher_id = data.split('_', 1)
+
+    if teacher_id not in teachers_cache:
+        await query.edit_message_text("Преподаватель не найден в кэше.")
+        return
+
+    teacher_name = teachers_cache[teacher_id]["name"]
+    keyboard = [
+        [
+            InlineKeyboardButton("Пары", callback_data=f"teacher_pairs_{teacher_id}"),
+            InlineKeyboardButton("Консультации", callback_data=f"teacher_consult_{teacher_id}")
+        ],
+        [
+            InlineKeyboardButton("⬅ Назад к списку", callback_data='teachers_list')
+        ]
+    ]
+    await query.edit_message_text(
+        text=f"Преподаватель: {teacher_name}\nВыберите действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    if not is_user_allowed(user_id):
+        await query.edit_message_text("У вас нет доступа.")
+        return
+
+    data = query.data
+    _, _, teacher_id = data.split('_', 2)
+
+    pairs = await fetch_pairs_for_teacher(teacher_id)
+    teachers_cache[teacher_id]["pairs"] = pairs
+
+    teacher_name = teachers_cache[teacher_id]["name"]
+
+    keyboard = []
+    for day_ru in RU_WEEKDAYS_ORDER:
+        keyboard.append([InlineKeyboardButton(day_ru, callback_data=f"teacher_day_{teacher_id}_{day_ru}")])
+
+    keyboard.append([InlineKeyboardButton("Сегодня", callback_data=f"teacher_day_{teacher_id}_TODAY")])
+    keyboard.append([InlineKeyboardButton("⬅ Назад к преподавателю", callback_data=f"teacher_{teacher_id}")])
+
+    await query.edit_message_text(
+        text=f"Выберите день, чтобы посмотреть пары у {teacher_name}:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def teacher_consult_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    _, _, teacher_id = data.split('_', 2)
+
+    teacher_name = teachers_cache.get(teacher_id, {}).get("name", "Неизвестен")
+
+    consultations = await fetch_consultations_for_teacher(teacher_id)
+    message = f"Консультации {teacher_name}:\n\n"
+    if not consultations:
+        message += "Нет доступных консультаций или они ещё не выложены.\n"
+    else:
+        for c in consultations:
+            message += f"📅 {c['date']}\n⏰ {c['time']}\n{c['info']}\n\n"
+
+    keyboard = [[InlineKeyboardButton("⬅ Назад к преподавателю", callback_data=f"teacher_{teacher_id}")]]
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    _, _, teacher_id, day_ru = data.split('_', 3)
+
+    teacher_name = teachers_cache.get(teacher_id, {}).get("name", "Неизвестен")
+    pairs = teachers_cache[teacher_id].get("pairs", {})
+
+    if day_ru == "TODAY":
+        _, day_name_ru, _ = get_current_week_and_day()
+        day_ru = day_name_ru
+
+    if day_ru not in pairs:
+        await query.edit_message_text(f"Для {day_ru} нет данных о парах.")
+        return
+
+    lessons = pairs[day_ru]
+    message = f"Пары у {teacher_name} на {day_ru}:\n\n"
+    if not lessons:
+        message += "Нет пар в этот день.\n"
+    else:
+        for lesson in lessons:
+            message += f"⏰ {lesson['time']}\n{lesson['info']}\n\n"
+
+    keyboard = [[InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")]]
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик ошибок, который логирует ошибки и уведомляет администратора."""
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     stats['errors'] += 1
     save_stats()
@@ -718,6 +1035,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logger.error(f"Не удалось уведомить администратора о ошибке: {e}")
 
+# ---------------- Команды управления доступом ----------------
 # /adduser
 async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -819,8 +1137,6 @@ async def listusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     message_lines = []
-
-# Включение владельца
     owner_username = "Владелец"
     try:
         owner_user = await context.bot.get_chat(OWNER_ID)
@@ -858,6 +1174,9 @@ async def listusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 # /reload
 async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Перегружает кэш общего расписания (schedule_cache).
+    """
     user_id = update.effective_user.id
     username = update.effective_user.username or update.effective_user.full_name
 
@@ -876,6 +1195,28 @@ async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     stats['commands_executed'] += 1
     save_stats()
     await update.message.reply_text("Кэш расписания перезагружен.")
+
+# /fullreload
+async def fullreload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if get_user_role(user_id) not in ["admin", "owner"]:
+        await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+
+    application = context.application
+    # кэш расписания
+    global schedule_cache, last_fetch_time
+    schedule_cache = {}
+    last_fetch_time = 0
+    await fetch_schedule(application)
+
+    # кэш преподавателей
+    global teachers_cache, last_teachers_fetch_time
+    teachers_cache = {}
+    last_teachers_fetch_time = 0
+    await fetch_teachers(application)
+
+    await update.message.reply_text("Полная перезагрузка расписания и списка преподавателей завершена.")
 
 # /showlog
 async def showlog_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -972,7 +1313,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     stats['commands_executed'] += 1
     save_stats()
 
-# Команда /search
+# /search
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     username = update.effective_user.username or update.effective_user.full_name
@@ -997,18 +1338,21 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     results = []
     for week_key in ['week_1', 'week_2', 'session']:
-        for day, lessons in schedule.get(week_key, {}).items():
+        if week_key not in schedule:
+            continue
+        for day, lessons in schedule[week_key].items():
+            if day == '_today_day':
+                continue
             for lesson in lessons:
                 if isinstance(lesson, dict):
-                    if query in lesson['info'].lower():
+                    text_to_search = f"{lesson['time']} {lesson['info']}".lower()
+                    if query in text_to_search:
                         results.append({
                             'week': week_key,
                             'day': day,
                             'time': lesson['time'],
                             'info': lesson['info']
                         })
-                else:
-                    logger.error(f"Unexpected lesson format: {lesson} in week {week_key}, day {day}")
 
     if not results:
         await update.message.reply_text("Совпадений не найдено.")
@@ -1022,9 +1366,11 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             week_text = "2-ая неделя"
         else:
             week_text = "Сессия"
+
+        highlighted_info = highlight_query(res['info'], query)
         message += (
             f"**{week_text}** - **{res['day']}**\n"
-            f"⏰ {res['time']}\n{res['info']}\n\n"
+            f"⏰ {res['time']}\n{highlighted_info}\n\n"
         )
 
     if len(message) > 4096:
@@ -1063,7 +1409,7 @@ async def mod_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not is_user_allowed(target_user_id):
         stats['commands_executed'] += 1
         save_stats()
-        await update.message.reply_text("Этот пользователь не имеет доступа, сначала добавьте его через /adduser <user_id>.")
+        await update.message.reply_text("Этот пользователь не имеет доступа. Сначала добавьте через /adduser.")
         return
 
     set_user_role(target_user_id, "mod")
@@ -1110,7 +1456,7 @@ async def unmod_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     save_stats()
     await update.message.reply_text(f"Роль пользователя с ID {target_user_id} возвращена к `user`.\n\nРазработчик @lssued")
 
-# /adm 
+# /adm
 async def adm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     username = update.effective_user.username or update.effective_user.full_name
@@ -1133,7 +1479,6 @@ async def adm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     stats['commands_executed'] += 1
     save_stats()
     await update.message.reply_text(f"Пользователь с ID {target_user_id} назначен администратором.\n\nРазработчик @lssued")
-
     logger.warning(f"Команда /adm выполнена {username} ({user_id}): назначен администратор {target_user_id}")
 
 # /unadm
@@ -1164,11 +1509,11 @@ async def unadm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     stats['commands_executed'] += 1
     save_stats()
     await update.message.reply_text(f"Пользователь с ID {target_user_id} снят с роли администратора.\n\nРазработчик @lssued")
-
     logger.warning(f"Команда /unadm выполнена {username} ({user_id}): снята роль администратора с {target_user_id}")
 
 # /restart
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
     user_id = update.effective_user.id
     if get_user_role(user_id) != "owner":
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
@@ -1177,6 +1522,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text("Перезагрузка бота...")
     logger.info(f"Пользователь {user_id} инициировал перезагрузку бота.")
     save_stats()
+
     await context.application.stop()
     sys.exit(0)
 
@@ -1185,27 +1531,28 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id
     role = get_user_role(user_id)
 
-    # Не авторизированны
+    # Базовый набор
     public_commands = [
         "/start - Запустить бота",
         "/help - Показать доступные команды",
     ]
 
-    # Авторизованны
+    # Для обычных юзеров
     user_commands = [
         "/search <запрос> - Поиск по предметам и преподавателям",
         "/plan - Показать учебный план"
     ]
 
-    # Модератор и администратор
+    # Модер
     mod_admin_commands = [
         "/adduser <user_id> - Добавить пользователя",
         "/removeuser <user_id> - Удалить пользователя",
         "/listusers - Показать список пользователей",
-        "/reload - Перезагрузить кэш расписания"
+        "/reload - Перезагрузить кэш расписания",
+        "/fullreload - Полная перезагрузка (расписание + преподаватели)"
     ]
 
-    # Администратор
+    # Админ
     admin_commands = [
         "/showlog [число] - Показать последние записи из логов",
         "/stats - Показать статистику",
@@ -1214,7 +1561,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/broadcast <сообщение> - Рассылка объявления"
     ]
 
-    # овнер
+    # Владелец
     owner_commands = [
         "/adm <user_id> - Назначить пользователя администратором",
         "/unadm <user_id> - Снять пользователя с роли администратора",
@@ -1237,9 +1584,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     stats['commands_executed'] += 1
     save_stats()
 
+# --------------------------- Запуск приложения ---------------------------
 def main():
     TOKEN = os.environ.get("TOKEN")  # Токен бота из .env
-
     if not TOKEN:
         logger.error("Пожалуйста, установите ваш Telegram Bot Token в .env (переменная TOKEN).")
         exit(1)
@@ -1248,12 +1595,13 @@ def main():
 
     application = ApplicationBuilder().token(TOKEN).build()
 
-    # команд
+    # Команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adduser", adduser))
     application.add_handler(CommandHandler("removeuser", removeuser))
     application.add_handler(CommandHandler("listusers", listusers_handler))
     application.add_handler(CommandHandler("reload", reload_command))
+    application.add_handler(CommandHandler("fullreload", fullreload_command)) 
     application.add_handler(CommandHandler("showlog", showlog_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("stats", stats_command))
@@ -1266,14 +1614,20 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("restart", restart_command))
 
-    # кнопоки
+    # Callback-кнопки
     application.add_handler(CallbackQueryHandler(back_to_week, pattern='^back_to_week$'))
     application.add_handler(CallbackQueryHandler(week_handler, pattern='^week_[12]$'))
     application.add_handler(CallbackQueryHandler(today_handler, pattern='^today$'))
     application.add_handler(CallbackQueryHandler(tomorrow_handler, pattern='^tomorrow$'))
     application.add_handler(CallbackQueryHandler(session_handler, pattern='^session$'))
     application.add_handler(CallbackQueryHandler(day_handler, pattern='^week_[12]_.+$'))
+    application.add_handler(CallbackQueryHandler(teachers_list_handler, pattern='^teachers_list$'))
+    application.add_handler(CallbackQueryHandler(teacher_handler, pattern=r'^teacher_\d+$'))
+    application.add_handler(CallbackQueryHandler(teacher_pairs_handler, pattern=r'^teacher_pairs_\d+$'))
+    application.add_handler(CallbackQueryHandler(teacher_consult_handler, pattern=r'^teacher_consult_\d+$'))
+    application.add_handler(CallbackQueryHandler(teacher_day_pairs_handler, pattern=r'^teacher_day_\d+_.+$'))
 
+    # Обработчик ошибок
     application.add_error_handler(error_handler)
 
     application.run_polling()
