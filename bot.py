@@ -959,6 +959,7 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
     _, _, teacher_id = data.split('_', 2)
 
+    # Подгружаем (или обновляем) пары препода
     pairs = await fetch_pairs_for_teacher(teacher_id)
     teachers_cache[teacher_id]["pairs"] = pairs
 
@@ -968,6 +969,7 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
     for day_ru in RU_WEEKDAYS_ORDER:
         keyboard.append([InlineKeyboardButton(day_ru, callback_data=f"teacher_day_{teacher_id}_{day_ru}")])
 
+    keyboard.append([InlineKeyboardButton("Все дни", callback_data=f"teacher_day_{teacher_id}_ALL_DAYS")])
     keyboard.append([InlineKeyboardButton("Сегодня", callback_data=f"teacher_day_{teacher_id}_TODAY")])
     keyboard.append([InlineKeyboardButton("⬅ Назад к преподавателю", callback_data=f"teacher_{teacher_id}")])
 
@@ -975,6 +977,7 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
         text=f"Выберите день, чтобы посмотреть пары у {teacher_name}:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
 
 async def teacher_consult_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -1009,17 +1012,32 @@ async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAUL
         _, day_name_ru, _ = get_current_week_and_day()
         day_ru = day_name_ru
 
-    if day_ru not in pairs:
-        await query.edit_message_text(f"Для {day_ru} нет данных о парах.")
-        return
+    if day_ru == "ALL_DAYS":
+        message = f"Все дни, когда у {teacher_name} есть пары:\n\n"
+        for weekday_name, lessons in pairs.items():
+            if not lessons:
+                continue 
+            message += f"--- {weekday_name} ---\n\n"
+            for lesson in lessons:
+                time_ = lesson['time']
+                info_ = lesson['info']
+                message += f"⏰ {time_}\n{info_}\n\n"
 
-    lessons = pairs[day_ru]
-    message = f"Пары у {teacher_name} на {day_ru}:\n\n"
-    if not lessons:
-        message += "Нет пар в этот день.\n"
+        if message.strip() == f"Все дни, когда у {teacher_name} есть пары:":
+            message += "\nНет пар ни в один день."
+
     else:
-        for lesson in lessons:
-            message += f"⏰ {lesson['time']}\n{lesson['info']}\n\n"
+        if day_ru not in pairs:
+            await query.edit_message_text(f"Для {day_ru} нет данных о парах.")
+            return
+
+        lessons = pairs[day_ru]
+        message = f"Пары у {teacher_name} на {day_ru}:\n\n"
+        if not lessons:
+            message += "Нет пар в этот день.\n"
+        else:
+            for lesson in lessons:
+                message += f"⏰ {lesson['time']}\n{lesson['info']}\n\n"
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")]]
     await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
