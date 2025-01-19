@@ -222,6 +222,30 @@ async def notify_admin(application, message: str):
     except Exception as e:
         logger.error(f"Не удалось уведомить администратора: {e}")
 
+def chunk_text(text: str, chunk_size=4000) -> list[str]:
+    """
+    Разбивает длинный текст на список подстрок не более chunk_size.
+    """
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start = end
+    return chunks
+
+async def safe_edit_message(query, text, reply_markup=None):
+    """
+    Безопасная замена query.edit_message_text с подавлением "Message is not modified".
+    """
+    try:
+        await query.edit_message_text(text=text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            pass
+        else:
+            logger.error(f"Ошибка при редактировании сообщения: {e}")
+
 # ----------------------------------------- парсинг преподав -----------------------------------------------
 async def fetch_teachers(application):
 
@@ -277,16 +301,6 @@ async def fetch_teachers(application):
 
 # ----------------------------------------- Парсинг консультаций препода -----------------------------------------------
 async def fetch_consultations_for_teacher(teacher_id: str) -> list:
-    """
-    [
-      {
-        "date": "...",
-        "time": "...",
-        "info": "..."
-      },
-      ...
-    ]
-    """
     consultations = []
     try:
         url = f"https://timetable.pallada.sibsau.ru/timetable/professor/{teacher_id}"
@@ -336,13 +350,6 @@ async def fetch_consultations_for_teacher(teacher_id: str) -> list:
 
 # -------------------------------------------- Парсинг пар препода по дням --------------------------------------------
 async def fetch_pairs_for_teacher(teacher_id: str) -> dict:
-    """
-    Возвращает:
-    {
-      'Понедельник': [ { 'time': '...', 'info': '...' }, ... ],
-      ...
-    }
-    """
     result = {
         'Понедельник': [],
         'Вторник': [],
@@ -684,11 +691,11 @@ async def week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     save_stats()
 
     if not schedule:
-        await query.edit_message_text(text="Не удалось получить расписание. Попробуйте позже.")
+        await safe_edit_message(query, text="Не удалось получить расписание. Попробуйте позже.")
         return
 
     if week not in schedule:
-        await query.edit_message_text(text="Расписание для выбранной недели не найдено.")
+        await safe_edit_message(query, text="Расписание для выбранной недели не найдено.")
         return
 
     keyboard = []
@@ -701,14 +708,7 @@ async def week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     week_number = '1' if week == 'week_1' else '2'
     new_text = f"Вы выбрали {week_number}-ю неделю. Выберите день:"
 
-    try:
-        await query.edit_message_text(text=new_text, reply_markup=InlineKeyboardMarkup(keyboard))
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
-            logger.error(f"Ошибка при редактировании сообщения: {e}")
-            await notify_admin(application, f"Ошибка при редактировании сообщения: {e}")
+    await safe_edit_message(query, text=new_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -721,11 +721,11 @@ async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     save_stats()
 
     if not schedule:
-        await query.edit_message_text(text="Не удалось получить расписание. Попробуйте позже.")
+        await safe_edit_message(query, text="Не удалось получить расписание. Попробуйте позже.")
         return
 
     if current_week not in schedule:
-        await query.edit_message_text(text="Расписание для текущей недели не найдено.")
+        await safe_edit_message(query, text="Расписание для текущей недели не найдено.")
         return
 
     if '_today_day' in schedule[current_week]:
@@ -744,7 +744,7 @@ async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     keyboard = [
         [InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')],
     ]
-    await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -756,13 +756,13 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     save_stats()
 
     if not schedule:
-        await query.edit_message_text(text="Не удалось получить расписание. Попробуйте позже.")
+        await safe_edit_message(query, text="Не удалось получить расписание. Попробуйте позже.")
         return
 
     date_str, day_name, current_week = get_current_week_and_day()
 
     if current_week not in schedule:
-        await query.edit_message_text(text="Расписание для текущей недели не найдено.")
+        await safe_edit_message(query, text="Расписание для текущей недели не найдено.")
         return
 
     if '_today_day' in schedule[current_week]:
@@ -792,7 +792,7 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             message += f"⏰ {lesson['time']}\n📅 {lesson['info']}\n\n"
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')]]
-    await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -804,11 +804,11 @@ async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     save_stats()
 
     if not schedule:
-        await query.edit_message_text(text="Не удалось получить расписание. Попробуйте позже.")
+        await safe_edit_message(query, text="Не удалось получить расписание. Попробуйте позже.")
         return
 
     if "session" not in schedule:
-        await query.edit_message_text(text="Расписание сессии не найдено.")
+        await safe_edit_message(query, text="Расписание сессии не найдено.")
         return
 
     session_schedule = schedule["session"]
@@ -822,7 +822,7 @@ async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             message += "Расписание отсутствует.\n\n"
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')]]
-    await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -831,7 +831,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     data = query.data
     parts = data.rsplit('_', 1)
     if len(parts) != 2:
-        await query.edit_message_text(text="Неверный формат данных.")
+        await safe_edit_message(query, text="Неверный формат данных.")
         return
 
     week, day = parts
@@ -841,11 +841,11 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     save_stats()
 
     if not schedule:
-        await query.edit_message_text(text="Не удалось получить расписание. Попробуйте позже.")
+        await safe_edit_message(query, text="Не удалось получить расписание. Попробуйте позже.")
         return
 
     if week not in schedule:
-        await query.edit_message_text(text="Расписание для выбранной недели не найдено.")
+        await safe_edit_message(query, text="Расписание для выбранной недели не найдено.")
         return
 
     lessons = schedule[week].get(day, [])
@@ -857,12 +857,11 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             message += f"⏰ {lesson['time']}\n📅 {lesson['info']}\n\n"
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к неделям", callback_data='back_to_week')]]
-    await query.edit_message_text(text=message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    application = context.application
     date_str, day_name, current_week = get_current_week_and_day()
     week_text = "1-ая неделя" if current_week == 'week_1' else "2-ая неделя"
     welcome_message = (
@@ -884,7 +883,7 @@ async def back_to_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             InlineKeyboardButton("Преподаватели", callback_data='teachers_list')
         ]
     ]
-    await query.edit_message_text(welcome_message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=welcome_message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ------------------------- Преподаватели -------------------------
 async def teachers_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -893,14 +892,14 @@ async def teachers_list_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     user_id = update.effective_user.id
     if not is_user_allowed(user_id):
-        await query.edit_message_text("У вас нет доступа к информации о преподавателях.")
+        await safe_edit_message(query, text="У вас нет доступа к информации о преподавателях.")
         return
 
     application = context.application
     await fetch_teachers(application)
 
     keyboard = []
-    limit = 100  # ограничение по преподам в телге макс 100
+    limit = 100  # ограничение по отображаемым преподавателям
     count = 0
     for teacher_id, data in teachers_cache.items():
         name = data["name"]
@@ -911,7 +910,8 @@ async def teachers_list_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     keyboard.append([InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')])
 
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         text="Список преподавателей. \n\nВыберите преподавателя:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -922,14 +922,14 @@ async def teacher_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
 
     if not is_user_allowed(user_id):
-        await query.edit_message_text("У вас нет доступа к этой функции.")
+        await safe_edit_message(query, text="У вас нет доступа к этой функции.")
         return
 
     data = query.data
     _, teacher_id = data.split('_', 1)
 
     if teacher_id not in teachers_cache:
-        await query.edit_message_text("Преподаватель не найден в кэше.")
+        await safe_edit_message(query, text="Преподаватель не найден в кэше.")
         return
 
     teacher_name = teachers_cache[teacher_id]["name"]
@@ -942,7 +942,8 @@ async def teacher_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             InlineKeyboardButton("⬅ Назад к списку", callback_data='teachers_list')
         ]
     ]
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         text=f"Преподаватель: {teacher_name}\nВыберите действие:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -953,7 +954,7 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
 
     if not is_user_allowed(user_id):
-        await query.edit_message_text("У вас нет доступа.")
+        await safe_edit_message(query, text="У вас нет доступа.")
         return
 
     data = query.data
@@ -973,7 +974,8 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard.append([InlineKeyboardButton("Сегодня", callback_data=f"teacher_day_{teacher_id}_TODAY")])
     keyboard.append([InlineKeyboardButton("⬅ Назад к преподавателю", callback_data=f"teacher_{teacher_id}")])
 
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         text=f"Выберите день, чтобы посмотреть пары у {teacher_name}:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -997,7 +999,7 @@ async def teacher_consult_handler(update: Update, context: ContextTypes.DEFAULT_
             message += f"📅 {c['date']}\n⏰ {c['time']}\n{c['info']}\n\n"
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к преподавателю", callback_data=f"teacher_{teacher_id}")]]
-    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -1008,39 +1010,113 @@ async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAUL
     teacher_name = teachers_cache.get(teacher_id, {}).get("name", "Неизвестен")
     pairs = teachers_cache[teacher_id].get("pairs", {})
 
+    user_id = update.effective_user.id
+
+    # Обработка "Сегодня"
     if day_ru == "TODAY":
         _, day_name_ru, _ = get_current_week_and_day()
         day_ru = day_name_ru
 
+    # Если "Все дни" -> нужна пагинация, если сообщение слишком длинное
     if day_ru == "ALL_DAYS":
-        message = f"Все дни, когда у {teacher_name} есть пары:\n\n"
+        full_text = f"Все дни, когда у {teacher_name} есть пары:\n\n"
+        empty_check = True
         for weekday_name, lessons in pairs.items():
             if not lessons:
                 continue 
-            message += f"--- {weekday_name} ---\n\n"
+            empty_check = False
+            full_text += f"--- {weekday_name} ---\n\n"
             for lesson in lessons:
                 time_ = lesson['time']
                 info_ = lesson['info']
-                message += f"⏰ {time_}\n{info_}\n\n"
+                full_text += f"⏰ {time_}\n{info_}\n\n"
 
-        if message.strip() == f"Все дни, когда у {teacher_name} есть пары:":
-            message += "\nНет пар ни в один день."
+        if empty_check:
+            full_text += "\nНет пар ни в один день."
 
+        # Разбиваем на страницы
+        pages = chunk_text(full_text, 4000)
+        context.user_data.setdefault("teacher_pages", {})
+        # Сохраняем результат под ключом (user_id, teacher_id, "all_days")
+        context.user_data["teacher_pages"][(user_id, teacher_id, "all_days")] = pages
+
+        # Отобразим первую страницу
+        page_index = 0
+        text_page = pages[page_index]
+        keyboard = []
+        if len(pages) > 1:
+            keyboard = [
+                [
+                    InlineKeyboardButton("Далее", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
+                ]
+            ]
+        keyboard.append([InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")])
+
+        await safe_edit_message(query, text=text_page, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # Если обычный день
+    if day_ru not in pairs:
+        await safe_edit_message(query, text=f"Для {day_ru} нет данных о парах.")
+        return
+
+    lessons = pairs[day_ru]
+    message = f"Пары у {teacher_name} на {day_ru}:\n\n"
+    if not lessons:
+        message += "Нет пар в этот день.\n"
     else:
-        if day_ru not in pairs:
-            await query.edit_message_text(f"Для {day_ru} нет данных о парах.")
-            return
-
-        lessons = pairs[day_ru]
-        message = f"Пары у {teacher_name} на {day_ru}:\n\n"
-        if not lessons:
-            message += "Нет пар в этот день.\n"
-        else:
-            for lesson in lessons:
-                message += f"⏰ {lesson['time']}\n{lesson['info']}\n\n"
+        for lesson in lessons:
+            message += f"⏰ {lesson['time']}\n{lesson['info']}\n\n"
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")]]
-    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+    await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def teacher_all_days_pagination_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+
+    data = query.data
+    parts = data.split('_')  # 'teacher_all_days_page_123_4' -> ['teacher','all','days','page','123','4']
+    teacher_id = parts[4]
+    page_index_str = parts[5]
+
+    page_index = int(page_index_str)
+
+    pages_dict = context.user_data.get("teacher_pages", {})
+    pages = pages_dict.get((user_id, teacher_id, "all_days"), [])
+
+    if not pages:
+        await safe_edit_message(query, text="Данные о страницах не найдены или устарели.")
+        return
+
+    if page_index < 0 or page_index >= len(pages):
+        await safe_edit_message(query, text="Страница не найдена.")
+        return
+
+    text_page = pages[page_index]
+
+    keyboard = []
+    # Кнопка "Назад"
+    if page_index > 0:
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index-1}")
+        ])
+    # Кнопка "Далее"
+    if page_index < len(pages) - 1:
+        if keyboard:
+            keyboard[0].append(
+                InlineKeyboardButton("➡️ Далее", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
+            )
+        else:
+            keyboard = [[
+                InlineKeyboardButton("➡️ Далее", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
+            ]]
+
+    # Отдельная строка для возврата к списку дней
+    keyboard.append([InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")])
+
+    await safe_edit_message(query, text=text_page, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
@@ -1644,6 +1720,7 @@ def main():
     application.add_handler(CallbackQueryHandler(teacher_pairs_handler, pattern=r'^teacher_pairs_\d+$'))
     application.add_handler(CallbackQueryHandler(teacher_consult_handler, pattern=r'^teacher_consult_\d+$'))
     application.add_handler(CallbackQueryHandler(teacher_day_pairs_handler, pattern=r'^teacher_day_\d+_.+$'))
+    application.add_handler(CallbackQueryHandler(teacher_all_days_pagination_handler, pattern=r'^teacher_all_days_page_\d+_\d+$'))
 
     # Обработчик ошибок
     application.add_error_handler(error_handler)
