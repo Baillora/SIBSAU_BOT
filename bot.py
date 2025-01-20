@@ -222,22 +222,37 @@ async def notify_admin(application, message: str):
     except Exception as e:
         logger.error(f"Не удалось уведомить администратора: {e}")
 
-def chunk_text(text: str, chunk_size=4000) -> list[str]:
-    """
-    Разбивает длинный текст на список подстрок не более chunk_size.
-    """
+def chunk_text_by_lines(text: str, chunk_size=4000) -> list[str]:
+    lines = text.split('\n')
     chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start = end
+    current_chunk = ""
+
+    for line in lines:
+        if len(line) > chunk_size:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            start = 0
+            while start < len(line):
+                end = start + chunk_size
+                chunks.append(line[start:end])
+                start = end
+        else:
+            if not current_chunk:  
+                current_chunk = line
+            elif len(current_chunk) + len(line) + 1 <= chunk_size:
+                current_chunk += "\n" + line
+            else:
+                chunks.append(current_chunk)
+                current_chunk = line
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
     return chunks
 
 async def safe_edit_message(query, text, reply_markup=None):
-    """
-    Безопасная замена query.edit_message_text с подавлением "Message is not modified".
-    """
     try:
         await query.edit_message_text(text=text, reply_markup=reply_markup)
     except BadRequest as e:
@@ -301,6 +316,16 @@ async def fetch_teachers(application):
 
 # ----------------------------------------- Парсинг консультаций препода -----------------------------------------------
 async def fetch_consultations_for_teacher(teacher_id: str) -> list:
+    """
+    [
+      {
+        "date": "...",
+        "time": "...",
+        "info": "..."
+      },
+      ...
+    ]
+"""
     consultations = []
     try:
         url = f"https://timetable.pallada.sibsau.ru/timetable/professor/{teacher_id}"
@@ -350,6 +375,13 @@ async def fetch_consultations_for_teacher(teacher_id: str) -> list:
 
 # -------------------------------------------- Парсинг пар препода по дням --------------------------------------------
 async def fetch_pairs_for_teacher(teacher_id: str) -> dict:
+    """
+    Возвращает:
+    {
+      'Понедельник': [ { 'time': '...', 'info': '...' }, ... ],
+      ...
+    }
+"""
     result = {
         'Понедельник': [],
         'Вторник': [],
@@ -960,7 +992,6 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
     _, _, teacher_id = data.split('_', 2)
 
-    # Подгружаем (или обновляем) пары препода
     pairs = await fetch_pairs_for_teacher(teacher_id)
     teachers_cache[teacher_id]["pairs"] = pairs
 
@@ -1017,7 +1048,6 @@ async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAUL
         _, day_name_ru, _ = get_current_week_and_day()
         day_ru = day_name_ru
 
-    # Если "Все дни" -> нужна пагинация, если сообщение слишком длинное
     if day_ru == "ALL_DAYS":
         full_text = f"Все дни, когда у {teacher_name} есть пары:\n\n"
         empty_check = True
@@ -1034,20 +1064,17 @@ async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAUL
         if empty_check:
             full_text += "\nНет пар ни в один день."
 
-        # Разбиваем на страницы
-        pages = chunk_text(full_text, 4000)
+        pages = chunk_text_by_lines(full_text, 4000)
         context.user_data.setdefault("teacher_pages", {})
-        # Сохраняем результат под ключом (user_id, teacher_id, "all_days")
         context.user_data["teacher_pages"][(user_id, teacher_id, "all_days")] = pages
 
-        # Отобразим первую страницу
         page_index = 0
         text_page = pages[page_index]
         keyboard = []
         if len(pages) > 1:
             keyboard = [
                 [
-                    InlineKeyboardButton("Далее", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
+                    InlineKeyboardButton("Далее ➡️", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
                 ]
             ]
         keyboard.append([InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")])
@@ -1077,7 +1104,7 @@ async def teacher_all_days_pagination_handler(update: Update, context: ContextTy
     user_id = update.effective_user.id
 
     data = query.data
-    parts = data.split('_')  # 'teacher_all_days_page_123_4' -> ['teacher','all','days','page','123','4']
+    parts = data.split('_')
     teacher_id = parts[4]
     page_index_str = parts[5]
 
@@ -1097,23 +1124,20 @@ async def teacher_all_days_pagination_handler(update: Update, context: ContextTy
     text_page = pages[page_index]
 
     keyboard = []
-    # Кнопка "Назад"
     if page_index > 0:
         keyboard.append([
             InlineKeyboardButton("⬅️ Назад", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index-1}")
         ])
-    # Кнопка "Далее"
     if page_index < len(pages) - 1:
         if keyboard:
             keyboard[0].append(
-                InlineKeyboardButton("➡️ Далее", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
+                InlineKeyboardButton("Далее ➡️", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
             )
         else:
             keyboard = [[
-                InlineKeyboardButton("➡️ Далее", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
+                InlineKeyboardButton("Далее ➡️", callback_data=f"teacher_all_days_page_{teacher_id}_{page_index+1}")
             ]]
 
-    # Отдельная строка для возврата к списку дней
     keyboard.append([InlineKeyboardButton("⬅ Назад к списку дней", callback_data=f"teacher_pairs_{teacher_id}")])
 
     await safe_edit_message(query, text=text_page, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1268,9 +1292,6 @@ async def listusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 # /reload
 async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Перегружает кэш общего расписания (schedule_cache).
-    """
     user_id = update.effective_user.id
     username = update.effective_user.username or update.effective_user.full_name
 
@@ -1435,18 +1456,20 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if week_key not in schedule:
             continue
         for day, lessons in schedule[week_key].items():
-            if day == '_today_day':
+            if day.startswith("_"):
                 continue
             for lesson in lessons:
                 if isinstance(lesson, dict):
-                    text_to_search = f"{lesson['time']} {lesson['info']}".lower()
-                    if query in text_to_search:
+                    info_lower = lesson['info'].lower()
+                    if query in info_lower:
                         results.append({
                             'week': week_key,
                             'day': day,
                             'time': lesson['time'],
                             'info': lesson['info']
                         })
+                else:
+                    logger.error(f"Unexpected lesson format: {lesson} in week {week_key}, day {day}")
 
     if not results:
         await update.message.reply_text("Совпадений не найдено.")
@@ -1460,11 +1483,9 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             week_text = "2-ая неделя"
         else:
             week_text = "Сессия"
-
-        highlighted_info = highlight_query(res['info'], query)
         message += (
             f"**{week_text}** - **{res['day']}**\n"
-            f"⏰ {res['time']}\n{highlighted_info}\n\n"
+            f"⏰ {res['time']}\n{res['info']}\n\n"
         )
 
     if len(message) > 4096:
@@ -1616,9 +1637,8 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text("Перезагрузка бота...")
     logger.info(f"Пользователь {user_id} инициировал перезагрузку бота.")
     save_stats()
-
-    await context.application.stop()
-    sys.exit(0)
+    python = sys.executable
+    os.execl(python, python, *sys.argv)
 
 # /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
