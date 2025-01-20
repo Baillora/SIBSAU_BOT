@@ -8,8 +8,7 @@ where /Q curl || (
 
 echo Downloading latest SIBSAU BOT
 
-REM This is a special GitHub link that points to the latest release. We always name our releases the same.
-curl -# -O -L https://github.com/Baillora/SIBSAU_BOT/releases/latest/download/sibsau/bot.py
+git clone https://github.com/Baillora/SIBSAU_BOT.git
 
 if errorlevel 1 (
     echo There was some error trying to download
