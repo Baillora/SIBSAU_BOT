@@ -2,12 +2,19 @@ import logging
 from logging.handlers import RotatingFileHandler
 import httpx
 from bs4 import BeautifulSoup
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    InlineQueryHandler
 )
 import time
 import datetime
@@ -15,11 +22,13 @@ import os
 import json
 import asyncio
 import re
-from pystyle import Colorate, Colors, Center 
+from pystyle import Colorate, Colors, Center
 from dotenv import load_dotenv
 from telegram.error import BadRequest
 import sys
 import subprocess
+from cachetools import TTLCache
+from uuid import uuid4
 
 load_dotenv()
 
@@ -60,15 +69,12 @@ except ValueError:
 
 ALLOWED_USERS_FILE = 'allowed_users.json'
 
-# Кэш расписания
-schedule_cache = {}
-cache_expiry = 60 * 30 # 30 минут
-last_fetch_time = 0
-
-# Кэш преподавателей
-teachers_cache = {}  
+# Параметры кэша
+cache_expiry = 60 * 30  # 30 минут
 teachers_cache_expiry = 24 * 60 * 60  # 24 часа
-last_teachers_fetch_time = 0
+
+schedule_cache = TTLCache(maxsize=100, ttl=cache_expiry)
+teachers_cache = TTLCache(maxsize=100, ttl=teachers_cache_expiry)
 
 STATS_FILE = 'stats.json'
 
@@ -100,20 +106,22 @@ stats = {
 def load_allowed_users():
     if not os.path.exists(ALLOWED_USERS_FILE):
         return {}
-    with open(ALLOWED_USERS_FILE, 'r', encoding='utf-8') as f:
-        try:
+    try:
+        with open(ALLOWED_USERS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             if "users" in data and isinstance(data["users"], dict):
                 return data["users"]
-            else:
-                return {}
-        except json.JSONDecodeError:
-            return {}
+    except (json.JSONDecodeError, FileNotFoundError):
+        logger.error("Ошибка при загрузке allowed_users.json")
+    return {}
 
 def save_allowed_users(users_dict):
-    data = {"users": users_dict}
-    with open(ALLOWED_USERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    try:
+        data = {"users": users_dict}
+        with open(ALLOWED_USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении allowed_users.json: {e}")
 
 allowed_users = load_allowed_users()
 
@@ -141,7 +149,7 @@ def set_user_role(user_id: int, role: str):
 def load_stats():
     global stats
     if not os.path.exists(STATS_FILE):
-        save_stats() 
+        save_stats()
         return
     with open(STATS_FILE, 'r', encoding='utf-8') as f:
         try:
@@ -232,14 +240,13 @@ def chunk_text_by_lines(text: str, chunk_size=4000) -> list[str]:
             if current_chunk:
                 chunks.append(current_chunk)
                 current_chunk = ""
-
             start = 0
             while start < len(line):
                 end = start + chunk_size
                 chunks.append(line[start:end])
                 start = end
         else:
-            if not current_chunk:  
+            if not current_chunk:
                 current_chunk = line
             elif len(current_chunk) + len(line) + 1 <= chunk_size:
                 current_chunk += "\n" + line
@@ -261,29 +268,43 @@ async def safe_edit_message(query, text, reply_markup=None):
         else:
             logger.error(f"Ошибка при редактировании сообщения: {e}")
 
+
+async def safe_message_send(context: ContextTypes.DEFAULT_TYPE, chat_id, text, parse_mode=None):
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            logger.error(f"Ошибка отправки сообщения: {e}")
+            await context.bot.send_message(chat_id=OWNER_ID, text=f"Ошибка отправки: {e}\n\n{text[:100]}")
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка отправки: {e}")
+        await context.bot.send_message(chat_id=OWNER_ID, text=f"Критическая ошибка: {e}")
+
+
 # ----------------------------------------- парсинг преподав -----------------------------------------------
 async def fetch_teachers(application):
-
-    global teachers_cache, last_teachers_fetch_time
-    current_time = time.time()
-    if current_time - last_teachers_fetch_time < teachers_cache_expiry and teachers_cache:
-        logger.info("Используется кэш преподавателей (до 24 часов).")
+    
+    if len(teachers_cache) > 0:
+        logger.info("Используется TTLCache преподавателей 24 часа.")
         return teachers_cache
 
     logger.info("Обновление списка преподавателей с сайта...")
-    teachers_cache = {} 
-    last_teachers_fetch_time = current_time
-
     main_url = "https://timetable.pallada.sibsau.ru/timetable/"
 
     async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            response_main = await client.get(main_url)
-            response_main.raise_for_status()
-        except httpx.RequestError as e:
-            logger.error(f"Ошибка при получении страницы (main_url): {e}")
-            await notify_admin(application, f"Ошибка при получении страницы (main_url): {e}")
-            return teachers_cache
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                response = await client.get(SCHEDULE_URL)
+                response.raise_for_status()
+                break
+            except httpx.RequestError as e:
+                logger.error(f"Ошибка при получении страницы расписания (попытка {attempt + 1}/{attempts}): {e}")
+                if attempt < attempts - 1:
+                    await asyncio.sleep(2)
+                else:
+                    await notify_admin(application, f"Ошибка при получении страницы расписания после {attempts} попыток: {e}")
+                    return schedule_cache
 
         url = os.getenv("SCHEDULE_URL")
         try:
@@ -297,6 +318,8 @@ async def fetch_teachers(application):
         soup = BeautifulSoup(response_schedule.text, "html.parser")
         professor_links = soup.find_all("a", href=re.compile(r"/timetable/professor/\d+"))
         logger.info(f"Найдено ссылок на преподавателей: {len(professor_links)}")
+
+        teachers_cache.clear()
 
         for link in professor_links:
             full_name = link.get_text(strip=True)
@@ -396,16 +419,16 @@ async def fetch_pairs_for_teacher(teacher_id: str) -> dict:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(url)
             response.raise_for_status()
-        
+
         soup = BeautifulSoup(response.content, "html.parser")
-        
+
         day_blocks = soup.find_all("div", class_="day")
         for day_block in day_blocks:
             day_classes = day_block.get("class", [])
             day_classes_lower = [c.lower() for c in day_classes]
             weekday_class = next(
-                (c for c in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] 
-                 if c in day_classes_lower), 
+                (c for c in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                 if c in day_classes_lower),
                 None
             )
             if not weekday_class:
@@ -439,11 +462,9 @@ async def fetch_pairs_for_teacher(teacher_id: str) -> dict:
 
 # --------------------------------------- Основной парсинг расписания ----------------------------------------
 async def fetch_schedule(application):
-    global schedule_cache, last_fetch_time
-    current_time = time.time()
 
-    if current_time - last_fetch_time < cache_expiry:
-        logger.info("Используется кэш расписания.")
+    if len(schedule_cache) > 0:
+        logger.info("Используется кэш расписания (TTLCache).")
         return schedule_cache
 
     logger.info("Обновление расписания с сайта.")
@@ -478,8 +499,8 @@ async def fetch_schedule(application):
                 day_classes = day.get("class", [])
                 day_classes_lower = [c.lower() for c in day_classes]
                 weekday_class = next(
-                    (c for c in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] 
-                     if c in day_classes_lower), 
+                    (c for c in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                     if c in day_classes_lower),
                     None
                 )
                 if not weekday_class:
@@ -517,6 +538,7 @@ async def fetch_schedule(application):
                 if day_ru not in schedule[week_key]:
                     schedule[week_key][day_ru] = []
 
+        # Сессия
         session_tab = soup.find("div", {"id": "session_tab"})
         if session_tab:
             schedule["session"] = {}
@@ -557,20 +579,30 @@ async def fetch_schedule(application):
         await notify_admin(application, f"Ошибка при парсинге расписания: {e}")
         return schedule_cache
 
-    schedule_cache = schedule
-    last_fetch_time = current_time
+    schedule_cache.clear()
+    for k, v in schedule.items():
+        schedule_cache[k] = v
+
     logger.info("Расписание успешно обновлено.")
     return schedule_cache
 
 def get_current_week_and_day():
-    today = datetime.date.today()
-    weekday_en = today.strftime('%A')
-    day_name_ru = WEEKDAYS.get(weekday_en, weekday_en)
-    semester_start = datetime.date(2024, 9, 1)
-    delta_weeks = (today - semester_start).days // 7
-    current_week = 'week_1' if delta_weeks % 2 == 0 else 'week_2'
-    date_str = today.strftime('%d.%m.%Y')
-    return date_str, day_name_ru, current_week
+    try:
+        today = datetime.date.today()
+        weekday_en = today.strftime('%A')
+        day_name_ru = WEEKDAYS.get(weekday_en, weekday_en)
+
+        semester_start = datetime.date(2024, 9, 1)
+        if today < semester_start:
+            raise ValueError("Семестр еще не начался")
+
+        delta_weeks = (today - semester_start).days // 7
+        current_week = 'week_1' if delta_weeks % 2 == 0 else 'week_2'
+        date_str = today.strftime('%d.%m.%Y')
+        return date_str, day_name_ru, current_week
+    except Exception as e:
+        logger.error(f"Ошибка при определении текущей недели/дня: {e}")
+        return None, None, None
 
 def get_tomorrow_week_and_day():
     tomorrow = datetime.date.today() + datetime.timedelta(days=1)
@@ -696,6 +728,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     save_stats()
     await update.message.reply_text(f"Объявление отправлено: успешно {success_count}, не удалось {failure_count}.")
 
+
 # /plan
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -710,8 +743,21 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     plan_message = f"Учебный план: {PLAN_URL}"
     await update.message.reply_text(plan_message)
 
-# ---------------- Обработчики кнопок  ----------------
+# /map
+async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if not is_user_allowed(user_id):
+        stats['commands_executed'] += 1
+        save_stats()
+        await update.message.reply_text("У вас нет доступа к этой команде.")
+        return
 
+    stats['commands_executed'] += 1
+    save_stats()
+    map_link = "https://cloud.sibsau.ru/s/KsYWFjEig2emNwH"
+    await update.message.reply_text(f"🗺️ Карта корпусов:\n{map_link}")
+
+# ---------------- Обработчики кнопок  ----------------
 async def week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -856,6 +902,7 @@ async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     keyboard = [[InlineKeyboardButton("⬅ Назад к меню", callback_data='back_to_week')]]
     await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
 
+
 async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -890,6 +937,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     keyboard = [[InlineKeyboardButton("⬅ Назад к неделям", callback_data='back_to_week')]]
     await safe_edit_message(query, text=message, reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 async def back_to_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -1011,7 +1059,6 @@ async def teacher_pairs_handler(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
 async def teacher_consult_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -1053,7 +1100,7 @@ async def teacher_day_pairs_handler(update: Update, context: ContextTypes.DEFAUL
         empty_check = True
         for weekday_name, lessons in pairs.items():
             if not lessons:
-                continue 
+                continue
             empty_check = False
             full_text += f"--- {weekday_name} ---\n\n"
             for lesson in lessons:
@@ -1142,16 +1189,19 @@ async def teacher_all_days_pagination_handler(update: Update, context: ContextTy
 
     await safe_edit_message(query, text=text_page, reply_markup=InlineKeyboardMarkup(keyboard))
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     stats['errors'] += 1
     save_stats()
 
     try:
-        error_text = f"Произошла ошибка:\n```\n{context.error}\n```"
+        error_message = escape_markdown(str(context.error))
+        error_text = f"Произошла ошибка:\n```\n{error_message}\n```"
         await context.bot.send_message(chat_id=OWNER_ID, text=error_text, parse_mode='MarkdownV2')
     except Exception as e:
         logger.error(f"Не удалось уведомить администратора о ошибке: {e}")
+
 
 # ---------------- Команды управления доступом ----------------
 # /adduser
@@ -1302,10 +1352,10 @@ async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     application = context.application
-    global schedule_cache, last_fetch_time
-    schedule_cache = {}
-    last_fetch_time = 0
+    # Очищаем кэш расписания и просим заново загрузить
+    schedule_cache.clear()
     await fetch_schedule(application)
+
     logger.warning(f"Команда /reload выполнена {username} ({user_id}) - Кэш расписания перезагружен.")
     stats['commands_executed'] += 1
     save_stats()
@@ -1320,15 +1370,11 @@ async def fullreload_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     application = context.application
     # кэш расписания
-    global schedule_cache, last_fetch_time
-    schedule_cache = {}
-    last_fetch_time = 0
+    schedule_cache.clear()
     await fetch_schedule(application)
 
     # кэш преподавателей
-    global teachers_cache, last_teachers_fetch_time
-    teachers_cache = {}
-    last_teachers_fetch_time = 0
+    teachers_cache.clear()
     await fetch_teachers(application)
 
     await update.message.reply_text("Полная перезагрузка расписания и списка преподавателей завершена.")
@@ -1400,13 +1446,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     commands_executed = stats['commands_executed']
     errors = stats['errors']
     total_messages = stats['total_messages']
-    
+
     sorted_commands = sorted(stats['commands_per_user'].items(), key=lambda item: item[1], reverse=True)
     top_commands = "\n".join([f"• User ID {uid}: {count} команд" for uid, count in sorted_commands[:5]]) or "Нет данных"
-    
+
     sorted_peak = sorted(stats['peak_usage'].items(), key=lambda item: item[1], reverse=True)
     peak_times = "\n".join([f"• Час {hour}: {count} команд" for hour, count in sorted_peak[:5]]) or "Нет данных"
-    
+
     sorted_daily = sorted(stats['daily_active_users'].items(), key=lambda item: len(item[1]), reverse=True)
     daily_active = "\n".join([f"• {day}: {len(users)} пользователей" for day, users in sorted_daily[:5]]) or "Нет данных"
 
@@ -1628,7 +1674,6 @@ async def unadm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # /restart
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-
     user_id = update.effective_user.id
     if get_user_role(user_id) != "owner":
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
@@ -1654,10 +1699,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Для обычных юзеров
     user_commands = [
         "/search <запрос> - Поиск по предметам и преподавателям",
-        "/plan - Показать учебный план"
+        "/plan - Показать учебный план",
+        "/map - Показать карту корпусов"
     ]
 
-    # Модер
+    # Модер/админ
     mod_admin_commands = [
         "/adduser <user_id> - Добавить пользователя",
         "/removeuser <user_id> - Удалить пользователя",
@@ -1698,6 +1744,40 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     stats['commands_executed'] += 1
     save_stats()
 
+"""
+# ------------------------- Inline -------------------------
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.inline_query.query
+    if not query:
+        return
+
+    results = []
+    if query.startswith('/'):
+        command, *args = query.split()
+        args = ' '.join(args)
+
+        commands_map = {
+            '/today': ("Расписание на сегодня", today_handler),
+            '/tomorrow': ("Расписание на завтра", tomorrow_handler),
+            '/search': (f"Поиск: {args}", search_command),
+        }
+
+        if command in commands_map:
+            description, handler = commands_map[command]
+            results.append(
+                InlineQueryResultArticle(
+                    id=str(uuid4()),
+                    title=command,
+                    description=description,
+                    input_message_content=InputTextMessageContent(query)
+                )
+            )
+
+    await update.inline_query.answer(results)
+
+"""
+
+
 # --------------------------- Запуск приложения ---------------------------
 def main():
     TOKEN = os.environ.get("TOKEN")  # Токен бота из .env
@@ -1715,7 +1795,7 @@ def main():
     application.add_handler(CommandHandler("removeuser", removeuser))
     application.add_handler(CommandHandler("listusers", listusers_handler))
     application.add_handler(CommandHandler("reload", reload_command))
-    application.add_handler(CommandHandler("fullreload", fullreload_command)) 
+    application.add_handler(CommandHandler("fullreload", fullreload_command))
     application.add_handler(CommandHandler("showlog", showlog_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("stats", stats_command))
@@ -1727,6 +1807,7 @@ def main():
     application.add_handler(CommandHandler("plan", plan_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("restart", restart_command))
+    application.add_handler(CommandHandler("map", map_command))
 
     # Callback-кнопки
     application.add_handler(CallbackQueryHandler(back_to_week, pattern='^back_to_week$'))
@@ -1741,11 +1822,13 @@ def main():
     application.add_handler(CallbackQueryHandler(teacher_consult_handler, pattern=r'^teacher_consult_\d+$'))
     application.add_handler(CallbackQueryHandler(teacher_day_pairs_handler, pattern=r'^teacher_day_\d+_.+$'))
     application.add_handler(CallbackQueryHandler(teacher_all_days_pagination_handler, pattern=r'^teacher_all_days_page_\d+_\d+$'))
+    #application.add_handler(InlineQueryHandler(inline_query))
 
     # Обработчик ошибок
     application.add_error_handler(error_handler)
 
     application.run_polling()
+
 
 if __name__ == '__main__':
     main()

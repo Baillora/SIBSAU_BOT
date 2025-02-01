@@ -3,3 +3,5 @@ requests
 beautifulsoup4
 pystyle
 python-dotenv
+cachetools
+uuid
