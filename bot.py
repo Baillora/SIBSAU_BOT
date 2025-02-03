@@ -29,23 +29,53 @@ import sys
 import subprocess
 from cachetools import TTLCache
 from uuid import uuid4
+import structlog
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+class TelegramFilter(logging.Filter):
+    def filter(self, record):
+        return "https://api.telegram.org" not in record.getMessage()
 
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+logging.basicConfig(
+    format="%(message)s",
+    stream=sys.stdout,
+    level=LOG_LEVEL,
+)
 
-file_handler = RotatingFileHandler('warning.log', maxBytes=1*1024*1024, backupCount=5, encoding='utf-8')
+root_logger = logging.getLogger()
+for handler in root_logger.handlers:
+    handler.addFilter(TelegramFilter())
+
+def drop_telegram_requests(logger, method_name, event_dict):
+    event = event_dict.get("event", "")
+    if "https://api.telegram.org" in event:
+        raise structlog.DropEvent
+    return event_dict
+
+structlog.configure(
+    processors=[
+        drop_telegram_requests,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.stdlib.add_log_level,
+        structlog.processors.JSONRenderer(ensure_ascii=False)
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+logger = structlog.get_logger(__name__)
+
+file_handler = RotatingFileHandler('warning.log', maxBytes=1 * 1024 * 1024, backupCount=5, encoding='utf-8')
 file_handler.setLevel(logging.WARNING)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
+file_handler.addFilter(TelegramFilter())
+logging.getLogger().addHandler(file_handler)
+ 
 
 SCHEDULE_URL = os.environ.get("SCHEDULE_URL")
 if not SCHEDULE_URL:

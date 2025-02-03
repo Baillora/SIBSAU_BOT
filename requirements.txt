@@ -5,3 +5,4 @@ pystyle
 python-dotenv
 cachetools
 uuid
+structlog
