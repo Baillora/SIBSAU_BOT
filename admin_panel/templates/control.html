@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+  <h3 class="mb-4"><i class="fa-solid fa-sliders"></i> Управление ботом</h3>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <form method="post" action="{{ url_for('action_reload') }}" class="d-inline">
+        <button class="btn btn-warning"><i class="fa-solid fa-rotate-right"></i> Перезагрузить кэш</button>
+      </form>
+      <form method="post" action="{{ url_for('action_fullreload') }}" class="d-inline">
+        <button class="btn btn-danger"><i class="fa-solid fa-arrows-rotate"></i> Полная перезагрузка</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <form method="post" action="/control/broadcast">
+        <textarea name="message" class="form-control mb-2" rows="3" placeholder="Сообщение для рассылки"></textarea>
+        <button class="btn btn-primary"><i class="fa-solid fa-bullhorn"></i> Отправить рассылку</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

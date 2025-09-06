@@ -1,8 +1,10 @@
 ﻿python-telegram-bot==20.3
-requests
-beautifulsoup4
-pystyle
-python-dotenv
-cachetools
-uuid
-structlog
+httpx==0.24.1
+requests==2.27.1
+beautifulsoup4==4.12.3
+pystyle==2.9
+python-dotenv==1.0.1
+cachetools==4.2.2
+structlog==25.1.0
+Flask==3.0.3
+Flask-Login==0.6.3

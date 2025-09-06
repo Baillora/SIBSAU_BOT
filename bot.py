@@ -30,6 +30,8 @@ import subprocess
 from cachetools import TTLCache
 from uuid import uuid4
 import structlog
+from admin_panel.app import run_flask
+import threading
 
 load_dotenv()
 
@@ -134,47 +136,86 @@ stats = {
 }
 
 def load_allowed_users():
-    if not os.path.exists(ALLOWED_USERS_FILE):
-        return {}
+    """
+    Загружает актуальный список пользователей из allowed_users.json.
+    """
     try:
-        with open(ALLOWED_USERS_FILE, 'r', encoding='utf-8') as f:
+        with open("allowed_users.json", "r", encoding="utf-8") as f:
             data = json.load(f)
-            if "users" in data and isinstance(data["users"], dict):
-                return data["users"]
-    except (json.JSONDecodeError, FileNotFoundError):
-        logger.error("Ошибка при загрузке allowed_users.json")
-    return {}
+        return data.get("users", {})
+    except Exception:
+        return {}
 
-def save_allowed_users(users_dict):
+
+def save_allowed_users(users: dict):
+    """
+    Сохраняет пользователей в allowed_users.json.
+    """
     try:
-        data = {"users": users_dict}
-        with open(ALLOWED_USERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+        with open("allowed_users.json", "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"Ошибка при сохранении allowed_users.json: {e}")
+        logger.error(f"Ошибка сохранения allowed_users.json: {e}")
 
-allowed_users = load_allowed_users()
 
 def get_user_role(user_id: int) -> str:
-    if user_id == OWNER_ID:
+    """
+    Возвращает роль пользователя. Если это OWNER_ID из .env -> всегда owner.
+    """
+    if str(user_id) == str(OWNER_ID):
         return "owner"
-    return allowed_users.get(str(user_id), None)
+
+    users = load_allowed_users()
+    if str(user_id) in users:
+        udata = users[str(user_id)]
+        if isinstance(udata, str):
+            return udata
+        return udata.get("role", "user")
+
+    return "unknown"
+
 
 def is_user_allowed(user_id: int) -> bool:
-    return get_user_role(user_id) in ["user", "mod", "admin", "owner"]
+    """
+    Проверяет, есть ли пользователь в списке или он OWNER.
+    """
+    if str(user_id) == str(OWNER_ID):
+        return True
+    users = load_allowed_users()
+    return str(user_id) in users
+
 
 def is_mod_or_admin(user_id: int) -> bool:
+    """
+    Проверка, является ли пользователь модератором, админом или владельцем.
+    """
     role = get_user_role(user_id)
     return role in ["mod", "admin", "owner"]
 
-def set_user_role(user_id: int, role: str):
-    if user_id == OWNER_ID:
-        return
-    if role in ["admin", "mod", "user"]:
-        allowed_users[str(user_id)] = role
-    else:
-        allowed_users.pop(str(user_id), None)
-    save_allowed_users(allowed_users)
+
+def migrate_users_format():
+    """
+    Приводит allowed_users.json к новому формату:
+    { "123": {"role": "admin", "username": "@test"} }
+    """
+    users = load_allowed_users()
+    new_data = {}
+
+    for uid, val in users.items():
+        if isinstance(val, str):
+            new_data[uid] = {"role": val, "username": ""}
+        elif isinstance(val, dict):
+            new_data[uid] = {
+                "role": val.get("role", "user"),
+                "username": val.get("username", "")
+            }
+
+    # Добавляем OWNER в JSON если его нет
+    if str(OWNER_ID) not in new_data:
+        new_data[str(OWNER_ID)] = {"role": "owner", "username": ""}
+
+    save_allowed_users(new_data)
+
 
 def load_stats():
     global stats
@@ -1273,10 +1314,13 @@ async def adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         new_username = "Не доступен"
 
     set_user_role(new_user_id, "user")
-    logger.warning(f"Команда /adduser выполнена {username} ({user_id}) для добавления ID {new_user_id} ({new_username})")
+    logger.warning(f"/adduser: {username} ({user_id}) добавил {new_user_id} ({new_username})")
     stats['commands_executed'] += 1
     save_stats()
-    await update.message.reply_text(f"Пользователь с ID {new_user_id} ({new_username}) добавлен.\n\nРазработчик @lssued")
+
+    await update.message.reply_text(f"✅ Пользователь {new_username} (ID {new_user_id}) добавлен.")
+
+    await listusers_handler(update, context)
 
 # /removeuser
 async def removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1335,38 +1379,47 @@ async def listusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     message_lines = []
+
+    # Владелец
     owner_username = "Владелец"
     try:
         owner_user = await context.bot.get_chat(OWNER_ID)
         owner_username = f"@{owner_user.username}" if owner_user.username else owner_user.full_name
     except Exception as e:
-        logger.error(f"Ошибка при получении информации о владельце: {e}")
+        logger.error(f"Ошибка при получении владельца: {e}")
 
     message_lines.append(f"ID: {OWNER_ID}, Роль: owner, Username: {owner_username}")
 
-    for uid, urole in allowed_users.items():
+    # Остальные пользователи
+    users = load_allowed_users()
+    for uid, udata in users.items():
         try:
             user = await context.bot.get_chat(int(uid))
             user_username = f"@{user.username}" if user.username else user.full_name
         except Exception as e:
-            logger.error(f"Ошибка при получении пользователя {uid}: {e}")
+            logger.error(f"Ошибка при получении {uid}: {e}")
             user_username = "Не доступен"
 
-        message_lines.append(f"ID: {uid}, Роль: {urole}, Username: {user_username}")
+        role = udata.get("role", "user")
+        message_lines.append(f"ID: {uid}, Роль: {role}, Username: {user_username}")
 
-    if not allowed_users and OWNER_ID:
+        # обновляем username в JSON
+        users[uid]["username"] = user_username
+
+    save_allowed_users(users)
+
+    if not users and OWNER_ID:
         message_lines.append("Список разрешённых пользователей пуст.")
 
-    MAX_MESSAGE_LENGTH = 4096
     message = "\n".join(message_lines)
-    if len(message) > MAX_MESSAGE_LENGTH:
-        for i in range(0, len(message), MAX_MESSAGE_LENGTH):
-            await update.message.reply_text(message[i:i+MAX_MESSAGE_LENGTH])
+    if len(message) > 4096:
+        for i in range(0, len(message), 4096):
+            await update.message.reply_text(message[i:i+4096])
     else:
         message += "\n\nРазработчик @lssued"
         await update.message.reply_text(message)
 
-    logger.warning(f"Команда /listusers выполнена {username} ({user_id})")
+    logger.warning(f"/listusers выполнена {username} ({user_id})")
     stats['commands_executed'] += 1
     save_stats()
 
@@ -1382,7 +1435,7 @@ async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     application = context.application
-    # Очищаем кэш расписания и просим заново загрузить
+    # Очищаем кэш расписания и заново загружаем
     schedule_cache.clear()
     await fetch_schedule(application)
 
@@ -1603,7 +1656,7 @@ async def mod_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Этот пользователь не имеет доступа. Сначала добавьте через /adduser.")
         return
 
-    set_user_role(target_user_id, "mod")
+    set_user_role(target_user_id, "mod", allowed_users[str(target_user_id)].get("username", ""))
     logger.warning(f"Команда /mod выполнена {username} ({user_id}) для назначения пользователя {target_user_id} модератором")
     stats['commands_executed'] += 1
     save_stats()
@@ -1641,7 +1694,7 @@ async def unmod_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Этот пользователь не является модератором.")
         return
 
-    set_user_role(target_user_id, "user")
+    set_user_role(target_user_id, "user", allowed_users[str(target_user_id)].get("username", ""))
     logger.warning(f"Команда /unmod выполнена {username} ({user_id}) для снятия роли модератора с пользователя {target_user_id}")
     stats['commands_executed'] += 1
     save_stats()
@@ -1666,7 +1719,7 @@ async def adm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("User ID должен быть числом.")
         return
 
-    set_user_role(target_user_id, "admin")
+    set_user_role(target_user_id, "admin", allowed_users[str(target_user_id)].get("username", ""))
     stats['commands_executed'] += 1
     save_stats()
     await update.message.reply_text(f"Пользователь с ID {target_user_id} назначен администратором.\n\nРазработчик @lssued")
@@ -1696,7 +1749,7 @@ async def unadm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Этот пользователь не является администратором.")
         return
 
-    set_user_role(target_user_id, "user")
+    set_user_role(target_user_id, "user", allowed_users[str(target_user_id)].get("username", ""))
     stats['commands_executed'] += 1
     save_stats()
     await update.message.reply_text(f"Пользователь с ID {target_user_id} снят с роли администратора.\n\nРазработчик @lssued")
@@ -1815,6 +1868,13 @@ def main():
         logger.error("Пожалуйста, установите ваш Telegram Bot Token в .env (переменная TOKEN).")
         exit(1)
 
+    try:
+        migrate_users_format()
+        logger.info("Миграция пользователей выполнена успешно.")
+    except Exception as e:
+        logger.error(f"Ошибка миграции пользователей: {e}")
+
+
     print_startup_messages()
 
     application = ApplicationBuilder().token(TOKEN).build()
@@ -1857,7 +1917,21 @@ def main():
     # Обработчик ошибок
     application.add_error_handler(error_handler)
 
-    application.run_polling()
+
+    # Передаём application в панель
+    from admin_panel import app as admin_app
+    admin_app.application = application
+
+    # event loop для панели 
+    async def _on_startup(app):
+        from admin_panel import app as admin_app
+        admin_app.bot_loop = asyncio.get_running_loop()
+
+    application.post_init = _on_startup
+
+    threading.Thread(target=run_flask, daemon=True).start()
+
+    application.run_polling(close_loop=False)
 
 
 if __name__ == '__main__':
