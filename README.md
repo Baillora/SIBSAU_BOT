@@ -49,7 +49,7 @@
 
 1. **Настройка файла .env**
 
-Создайте файл .env в корневой директории проекта и добавьте в него токен вашего Telegram-бота, Ссылку на расписание, Ваш Telegram ID, Ключ для подписи куки ```openssl rand -hex 32```, Логин для панели и Пароль:
+Создайте файл .env в корневой директории проекта и добавьте в него токен вашего Telegram-бота, Ссылку на расписание, Ваш Telegram ID, Ключ для подписи куки ```openssl rand -hex 32```, Логин для панели, Пароль, Пути до SSL и Ключ для 2fa ```py -c "import pyotp; print(pyotp.random_base32())"```
 
 **TOKEN=YOUR_TELEGRAM_BOT_TOKEN_HERE**
 
@@ -64,6 +64,12 @@
 **PANEL_USER=LOGIN**
 
 **PANEL_PASS=PASSWORD**
+
+**SSL_CERT=self_signed.crt**
+
+**SSL_KEY=self_signed.crt**
+
+**TOTP_SECRET=SECRET**
 
 ## ▶️ Использование
 
