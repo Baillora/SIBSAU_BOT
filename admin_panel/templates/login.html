@@ -1,35 +1,27 @@
-<!doctype html>
-<html lang="ru">
-  <head>
-    <meta charset="utf-8">
-    <title>Вход в админку</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.2/dist/lux/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
-  </head>
-  <body class="d-flex align-items-center justify-content-center" style="min-height: 100vh; background:#f8f9fa;">
-    <div class="card shadow-lg p-4" style="max-width:400px; width:100%;">
-      <h4 class="text-center mb-4"><i class="fa-solid fa-lock"></i> Вход в панель</h4>
-      <form method="post">
-        <div class="mb-3">
-          <label class="form-label">Логин</label>
-          <input type="text" name="username" class="form-control" required autofocus>
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Пароль</label>
-          <input type="password" name="password" class="form-control" required>
-        </div>
-        <button class="btn btn-primary w-100"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>
-      </form>
-      <div class="pt-3">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="alert alert-{{ category }} mt-2">{{ message }}</div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
+{% extends "base.html" %}
+{% block content %}
+  <div class="card shadow-lg p-4" style="max-width:400px; margin:auto;">
+    <h4 class="text-center mb-4"><i class="fa-solid fa-lock"></i> Вход в панель</h4>
+    <form method="post">
+      {{ form.hidden_tag() }}
+      <div class="mb-3">
+        {{ form.username.label }}
+        {{ form.username(class="form-control") }}
       </div>
+      <div class="mb-3">
+        {{ form.password.label }}
+        {{ form.password(class="form-control") }}
+      </div>
+      {{ form.submit(class="btn btn-primary w-100") }}
+    </form>
+    <div class="pt-3">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }} mt-2">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
     </div>
-  </body>
-</html>
+  </div>
+{% endblock %}

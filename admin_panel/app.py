@@ -2,19 +2,30 @@ import os
 import json
 import asyncio
 import time
+import pyotp
+import qrcode
+import io
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-from flask import Flask, render_template, redirect, url_for, request, flash, session
+from flask import Flask, render_template, redirect, url_for, request, flash, session, send_file
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf import CSRFProtect
 from dotenv import load_dotenv
+from .forms import LoginForm, TwoFAForm
 
-# Настройки из окружения
+# ----- Настройки из окружения -----
 load_dotenv()
 
-FLASK_SECRET = os.environ.get("FLASK_SECRET")  # Для подписи cookies openssl rand -hex 32
+FLASK_SECRET = os.environ.get("FLASK_SECRET")  # Для подписи cookies
 PANEL_USER = os.environ.get("PANEL_USER")      # Для логина
 PANEL_PASS = os.environ.get("PANEL_PASS")      # Для пароля
+
 OWNER_ID = os.environ.get("PANEL_OWNER_ID")    # ID владельца
+
+SSL_CERT = os.environ.get("SSL_CERT")          # ssl сертификат .crt
+SSL_KEY = os.environ.get("SSL_KEY")            # ssl ключ .key
 
 # Проверка обязательных переменных
 missing = []
@@ -37,14 +48,34 @@ USERS_FILE = os.path.join(PROJECT_ROOT, "allowed_users.json")
 STATS_FILE = os.path.join(PROJECT_ROOT, "stats.json")
 LOG_FILE   = os.path.join(PROJECT_ROOT, "warning.log")
 
+# ----- Flask -----
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = FLASK_SECRET
 
-# Глобальные ссылки на бота
+# Безопасные настройки сессий
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,     # cookie только по HTTPS
+    SESSION_COOKIE_SAMESITE="Strict",
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30)
+)
+
+# CSRF защита
+csrf = CSRFProtect(app)
+
+# Ограничитель запросов (anti-bruteforce)
+limiter = Limiter(get_remote_address, app=app, default_limits=["10 per minute"])
+
+# ----- Глобальные ссылки на бота -----
 application = None
 bot_loop: Optional[asyncio.AbstractEventLoop] = None
 
-#УТИЛИТЫ 
+@app.before_request
+def warn_if_not_https():
+    if not request.is_secure:
+        flash("⚠️ Соединение не защищено! Используйте HTTPS", "danger")
+
+# ================== УТИЛИТЫ ==================
 def login_required(f):
     @wraps(f)
     def _wrap(*args, **kwargs):
@@ -83,15 +114,16 @@ def load_users() -> Dict[str, Dict[str, str]]:
                 # старый формат: uid: role
                 users[uid] = {"role": str(val), "username": ""}
     elif isinstance(data, dict):
-        # если весь файл старый формат {id: role}
+        # если весь файл — это старый формат {id: role}
         for uid, val in data.items():
             users[uid] = {"role": str(val), "username": ""}
 
-    # перезаписываем в новом формате
+    # сразу перезаписываем в новом формате
     if users:
         save_users(users)
 
     return users
+
 
 def save_users(users: Dict[str, Dict[str, str]]) -> None:
     write_json(USERS_FILE, {"users": users})
@@ -120,21 +152,34 @@ def schedule_coro(coro, retries: int = 10, delay: float = 0.5) -> None:
         time.sleep(delay)
     raise RuntimeError("Loop бота недоступен")
 
-# АВТОРИЗАЦИЯ 
+# ================== АВТОРИЗАЦИЯ ==================
 def check_login(username: str, password: str) -> bool:
     return username.strip() == PANEL_USER and password.strip() == PANEL_PASS
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
+    form = LoginForm()
+    if form.validate_on_submit():
+        username = form.username.data.strip()
+        password = form.password.data.strip()
         if check_login(username, password):
-            session["logged_in"] = True
-            return redirect(url_for("index"))
+            session["pre_2fa"] = True
+            session["username"] = username
+            return redirect(url_for("twofa"))
         else:
+            # уведомление владельцу через бота
+            try:
+                if OWNER_ID and application:
+                    schedule_coro(application.bot.send_message(
+                        chat_id=int(OWNER_ID),
+                        text=f"🚨 Неудачная попытка входа\nЛогин: {username}\nIP: {request.remote_addr}"
+                    ))
+            except Exception as e:
+                app.logger.warning(f"Не удалось отправить уведомление owner: {e}")
+
             flash("Неверный логин или пароль", "danger")
-    return render_template("login.html")
+    return render_template("login.html", form=form)
 
 @app.route("/")
 @login_required
@@ -172,15 +217,16 @@ def logout():
     session.pop("logged_in", None)
     return redirect(url_for("login"))
 
-# USERS 
+# ================== USERS ==================
 @app.route("/users", methods=["GET"])
 @login_required
 def users_page():
     users = load_users()
 
+    # Гарантируем наличие владельца
     if OWNER_ID:
         if str(OWNER_ID) not in users:
-            users[str(OWNER_ID)] = {"role": "owner", "username": OWNER_NAME}
+            users[str(OWNER_ID)] = {"role": "owner", "username": "Owner"}
             save_users(users)
 
     # Сортируем: сначала owner → admin → mod → user
@@ -203,28 +249,17 @@ def users_add():
         flash("ID пользователя должен быть числом", "danger")
         return redirect(url_for("users_page"))
 
+    if role == "owner":
+        flash("❌ Нельзя назначить нового владельца!", "danger")
+        role = "user"
+
     users = load_users()
-    users[uid] = {"role": role, "username": ""}  # username подтянется ботом при /listusers
+    users[uid] = {"role": role, "username": ""}
     save_users(users)
 
     flash(f"Пользователь {uid} добавлен с ролью {role}", "success")
     return redirect(url_for("users_page"))
 
-
-@app.route("/users/delete/<user_id>", methods=["POST"])
-@login_required
-def users_delete(user_id: str):
-    users = load_users()
-    if user_id in users:
-        if str(user_id) == str(OWNER_ID):
-            flash("Нельзя удалить владельца!", "danger")
-        else:
-            del users[user_id]
-            save_users(users)
-            flash(f"Пользователь {user_id} удалён", "warning")
-    else:
-        flash("Пользователь не найден", "danger")
-    return redirect(url_for("users_page"))
 
 
 @app.route("/users/setrole", methods=["POST"])
@@ -232,6 +267,10 @@ def users_delete(user_id: str):
 def users_setrole():
     uid = (request.form.get("user_id") or "").strip()
     role = (request.form.get("role") or "user").strip()
+
+    if uid == str(OWNER_ID):
+        flash("❌ Нельзя менять роль владельца!", "danger")
+        return redirect(url_for("users_page"))
 
     users = load_users()
     if uid in users:
@@ -243,7 +282,24 @@ def users_setrole():
 
     return redirect(url_for("users_page"))
 
-# LOGS
+@app.route("/users/delete/<user_id>", methods=["POST"])
+@login_required
+def users_delete(user_id: str):
+    if str(user_id) == str(OWNER_ID):
+        flash("❌ Нельзя удалить владельца!", "danger")
+        return redirect(url_for("users_page"))
+
+    users = load_users()
+    if user_id in users:
+        del users[user_id]
+        save_users(users)
+        flash(f"Пользователь {user_id} удалён", "warning")
+    else:
+        flash("Пользователь не найден", "danger")
+    return redirect(url_for("users_page"))
+
+
+# ================== LOGS ==================
 @app.route("/logs")
 @login_required
 def logs_page():
@@ -252,18 +308,28 @@ def logs_page():
         return data
     return render_template("logs.html", logs=data)
 
-# CONTRO
+# ================== CONTROL ==================
 @app.route("/control", methods=["GET"])
 @login_required
 def control_page():
     return render_template("control.html")
 
-# ДЕЙСТВИЯ (BOT)
+@app.route("/control/reset2fa", methods=["POST"])
+@login_required
+def action_reset2fa():
+    try:
+        write_json(TWOFA_FILE, {"enabled": False})
+        flash("🔑 2FA сброшено. При следующем входе снова отобразится QR-код.", "warning")
+    except Exception as e:
+        flash(f"Не удалось сбросить 2FA: {e}", "danger")
+    return redirect(url_for("control_page"))
+
+# ====== ДЕЙСТВИЯ (BOT) ======
 @app.route("/control/reload", methods=["POST"])
 @login_required
 def action_reload():
     """
-    Обновляет кэш расписания через функции бота.
+    Обновляет кэш расписания через функции бота, если они есть.
     """
     try:
         from bot import fetch_schedule, schedule_cache  # type: ignore
@@ -284,7 +350,7 @@ async def _reload_coro(fetch_schedule_func, schedule_cache_obj):
 @login_required
 def action_fullreload():
     """
-    Полная перезагрузка (расписание + преподаватели)
+    Полная перезагрузка (расписание + преподаватели), если функции есть.
     """
     try:
         from bot import fetch_schedule, schedule_cache, fetch_teachers, teachers_cache  # type: ignore
@@ -307,6 +373,7 @@ async def _fullreload_coro(fetch_schedule_func, schedule_cache_obj, fetch_teache
     try:
         await fetch_teachers_func(application)
     except Exception:
+        # если нет функции — тихо игнорируем
         pass
 
 @app.route("/control/broadcast", methods=["POST"])
@@ -340,12 +407,77 @@ async def _broadcast_coro(text: str, user_ids: list[str]):
             ok += 1
         except Exception:
             fail += 1
+    # Можно писать в лог
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().isoformat(timespec='seconds')}] broadcast: ok={ok}, fail={fail}\n")
     except Exception:
         pass
 
-# ЗАПУСК
+
+# ======== 2FA (Google Authenticator) ========
+TWOFA_FILE = os.path.join(PROJECT_ROOT, "2fa_status.json")
+TOTP_SECRET = os.environ.get("TOTP_SECRET") or pyotp.random_base32()
+totp = pyotp.TOTP(TOTP_SECRET)
+
+
+def is_2fa_enabled() -> bool:
+    data = read_json(TWOFA_FILE, {"enabled": False})
+    return data.get("enabled", False)
+
+
+def set_2fa_enabled():
+    write_json(TWOFA_FILE, {"enabled": True})
+
+
+@app.route("/qrcode")
+def qrcode_route():
+    # доступен только если пользователь прошёл login, но ещё не 2FA
+    if not session.get("pre_2fa") and not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    # если уже активирован 2FA — не рисуем QR
+    if is_2fa_enabled():
+        flash("2FA уже активировано, используйте код из приложения.", "info")
+        return redirect(url_for("twofa"))
+
+    uri = totp.provisioning_uri(name="AdminPanel", issuer_name="SIBSAU_BOT")
+    img = qrcode.make(uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png")
+
+
+@app.route("/2fa", methods=["GET", "POST"], endpoint="twofa")
+def twofa():
+    if not session.get("pre_2fa"):
+        return redirect(url_for("login"))
+
+    show_qr = not is_2fa_enabled()
+    form = TwoFAForm()
+
+    if form.validate_on_submit():
+        code = form.code.data.strip()
+        if totp.verify(code):
+            session.pop("pre_2fa", None)
+            session["logged_in"] = True
+            set_2fa_enabled()   # записываем, что QR больше не нужен
+            flash("✅ 2FA успешно подтверждено", "success")
+            return redirect(url_for("index"))
+        else:
+            flash("Неверный код 2FA", "danger")
+
+    return render_template("2fa.html", form=form, show_qr=show_qr)
+
+# ================== ЗАПУСК ==================
 def run_flask():
-    app.run(host="0.0.0.0", port=19999)
+    if SSL_CERT and SSL_KEY and os.path.exists(SSL_CERT) and os.path.exists(SSL_KEY):
+        app.run(
+            host="0.0.0.0",
+            port=19999,
+            ssl_context=(SSL_CERT, SSL_KEY)
+        )
+    else:
+        print("⚠️ SSL не настроен, панель будет работать по HTTP (небезопасно)")
+        app.run(host="0.0.0.0", port=19999)

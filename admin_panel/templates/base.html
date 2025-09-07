@@ -11,7 +11,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   </head>
   <body>
-    <!-- navbar -->
+    <!-- Навбар -->
+    {% if request.endpoint != "login" and request.endpoint != "twofa" %}
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
       <div class="container-fluid">
         <a class="navbar-brand fw-bold" href="{{ url_for('index') }}"><i class="fa-solid fa-gears"></i> Админка</a>
@@ -26,6 +27,7 @@
         </div>
       </div>
     </nav>
+    {% endif %}
 
     <!-- Контент -->
     <div class="container py-4">

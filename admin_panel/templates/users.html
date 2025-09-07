@@ -5,6 +5,7 @@
   <div class="card shadow-sm mb-4">
     <div class="card-body">
       <form class="row g-2" method="post" action="{{ url_for('users_add') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="col-md-4">
           <input name="user_id" class="form-control" placeholder="Telegram user id" required>
         </div>
@@ -13,7 +14,7 @@
             <option value="user">user</option>
             <option value="mod">mod</option>
             <option value="admin">admin</option>
-            <option value="owner">owner</option>
+            <!-- ⚠️ owner убран, чтобы нельзя было назначить -->
           </select>
         </div>
         <div class="col-md-4">
@@ -41,21 +42,30 @@
               <td class="text-monospace">{{ uid }}</td>
               <td>{{ data.username or "—" }}</td>
               <td>
-                <form class="d-flex" method="post" action="{{ url_for('users_setrole') }}">
-                  <input type="hidden" name="user_id" value="{{ uid }}">
-                  <select name="role" class="form-select me-2">
-                    <option value="user"  {% if data.role=='user' %}selected{% endif %}>user</option>
-                    <option value="mod"   {% if data.role=='mod' %}selected{% endif %}>mod</option>
-                    <option value="admin" {% if data.role=='admin' %}selected{% endif %}>admin</option>
-                    <option value="owner" {% if data.role=='owner' %}selected{% endif %}>owner</option>
-                  </select>
-                  <button class="btn btn-outline-secondary btn-sm"><i class="fa-solid fa-save"></i></button>
-                </form>
+                {% if data.role == 'owner' %}
+                  <span class="badge bg-dark">owner</span>
+                {% else %}
+                  <form class="d-flex" method="post" action="{{ url_for('users_setrole') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="user_id" value="{{ uid }}">
+                    <select name="role" class="form-select me-2">
+                      <option value="user"  {% if data.role=='user' %}selected{% endif %}>user</option>
+                      <option value="mod"   {% if data.role=='mod' %}selected{% endif %}>mod</option>
+                      <option value="admin" {% if data.role=='admin' %}selected{% endif %}>admin</option>
+                    </select>
+                    <button class="btn btn-outline-secondary btn-sm"><i class="fa-solid fa-save"></i></button>
+                  </form>
+                {% endif %}
               </td>
               <td>
-                <form method="post" action="{{ url_for('users_delete', user_id=uid) }}" onsubmit="return confirm('Удалить пользователя {{ uid }}?')">
-                  <button class="btn btn-outline-danger btn-sm"><i class="fa-solid fa-trash"></i> Удалить</button>
-                </form>
+                {% if data.role != 'owner' %}
+                  <form method="post" action="{{ url_for('users_delete', user_id=uid) }}" onsubmit="return confirm('Удалить пользователя {{ uid }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-outline-danger btn-sm"><i class="fa-solid fa-trash"></i> Удалить</button>
+                  </form>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
               </td>
             </tr>
             {% endfor %}
@@ -65,4 +75,3 @@
     </div>
   </div>
 {% endblock %}
-

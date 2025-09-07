@@ -1,10 +1,23 @@
-﻿python-telegram-bot==20.3
+﻿# --- Telegram Bot ---
+python-telegram-bot==20.3
 httpx==0.24.1
 requests==2.27.1
 beautifulsoup4==4.12.3
-pystyle==2.9
-python-dotenv==1.0.1
 cachetools==4.2.2
 structlog==25.1.0
+
+# --- Flask Admin Panel ---
 Flask==3.0.3
 Flask-Login==0.6.3
+Flask-WTF==1.2.2
+flask-limiter==3.12
+WTForms==3.2.1
+
+# --- 2FA / QR ---
+pyotp==2.9.0
+qrcode[pil]==8.2
+pillow==11.3.0
+
+# --- Utils ---
+pystyle==2.9
+python-dotenv==1.0.1

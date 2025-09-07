@@ -160,7 +160,7 @@ def save_allowed_users(users: dict):
 
 def get_user_role(user_id: int) -> str:
     """
-    Возвращает роль пользователя. Если это OWNER_ID из .env -> всегда owner.
+    Возвращает роль пользователя. Если это OWNER_ID из .env → всегда owner.
     """
     if str(user_id) == str(OWNER_ID):
         return "owner"
@@ -1435,7 +1435,7 @@ async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     application = context.application
-    # Очищаем кэш расписания и заново загружаем
+    # Очищаем кэш расписания и просим заново загрузить
     schedule_cache.clear()
     await fetch_schedule(application)
 
@@ -1918,19 +1918,21 @@ def main():
     application.add_error_handler(error_handler)
 
 
-    # Передаём application в панель
+    # ---- передаём application в панель ----
     from admin_panel import app as admin_app
     admin_app.application = application
 
-    # event loop для панели 
+    # ---- сохраняем event loop для панели ----
     async def _on_startup(app):
         from admin_panel import app as admin_app
         admin_app.bot_loop = asyncio.get_running_loop()
 
     application.post_init = _on_startup
 
+    # ---- Запускаем Flask в отдельном потоке ----
     threading.Thread(target=run_flask, daemon=True).start()
 
+    # ---- Запускаем бота ----
     application.run_polling(close_loop=False)
 
 

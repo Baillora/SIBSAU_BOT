@@ -5,10 +5,21 @@
   <div class="card shadow-sm mb-4">
     <div class="card-body">
       <form method="post" action="{{ url_for('action_reload') }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-warning"><i class="fa-solid fa-rotate-right"></i> Перезагрузить кэш</button>
       </form>
       <form method="post" action="{{ url_for('action_fullreload') }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-danger"><i class="fa-solid fa-arrows-rotate"></i> Полная перезагрузка</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <form method="post" action="{{ url_for('action_reset2fa') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-secondary"><i class="fa-solid fa-key"></i> Сбросить 2FA</button>
       </form>
     </div>
   </div>
@@ -16,6 +27,7 @@
   <div class="card shadow-sm">
     <div class="card-body">
       <form method="post" action="/control/broadcast">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <textarea name="message" class="form-control mb-2" rows="3" placeholder="Сообщение для рассылки"></textarea>
         <button class="btn btn-primary"><i class="fa-solid fa-bullhorn"></i> Отправить рассылку</button>
       </form>

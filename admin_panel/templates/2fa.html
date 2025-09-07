@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card shadow-lg p-4" style="max-width:400px; margin:auto;">
+    <h4 class="text-center mb-4"><i class="fa-solid fa-key"></i> Двухфакторная аутентификация</h4>
+
+    {% if show_qr %}
+      <p class="mb-3 text-muted text-center">
+        Отсканируйте QR-код в Google Authenticator и введите код ниже:
+      </p>
+      <div class="text-center mb-3">
+        <img src="{{ url_for('qrcode_route') }}" alt="QR Code 2FA" class="img-fluid rounded shadow-sm" />
+      </div>
+    {% else %}
+      <p class="mb-3 text-muted text-center">
+        Введите код из Google Authenticator:
+      </p>
+    {% endif %}
+
+    <form method="post">
+      {{ form.hidden_tag() }}
+      <div class="mb-3">
+        {{ form.code.label(class="form-label") }}
+        {{ form.code(class="form-control", autofocus=True) }}
+      </div>
+      {{ form.submit(class="btn btn-primary w-100") }}
+    </form>
+  </div>
+{% endblock %}
