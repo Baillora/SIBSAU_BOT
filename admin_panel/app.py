@@ -22,7 +22,7 @@ FLASK_SECRET = os.environ.get("FLASK_SECRET")  # Для подписи cookies
 PANEL_USER = os.environ.get("PANEL_USER")      # Для логина
 PANEL_PASS = os.environ.get("PANEL_PASS")      # Для пароля
 
-OWNER_ID = os.environ.get("PANEL_OWNER_ID")    # ID владельца
+OWNER_ID = os.environ.get("OWNER_ID")          # ID владельца
 
 SSL_CERT = os.environ.get("SSL_CERT")          # ssl сертификат .crt
 SSL_KEY = os.environ.get("SSL_KEY")            # ssl ключ .key
@@ -114,11 +114,11 @@ def load_users() -> Dict[str, Dict[str, str]]:
                 # старый формат: uid: role
                 users[uid] = {"role": str(val), "username": ""}
     elif isinstance(data, dict):
-        # если весь файл — это старый формат {id: role}
+        # если весь файл старый формат {id: role}
         for uid, val in data.items():
             users[uid] = {"role": str(val), "username": ""}
 
-    # сразу перезаписываем в новом формате
+    # перезаписываем в новом формате
     if users:
         save_users(users)
 
@@ -223,13 +223,12 @@ def logout():
 def users_page():
     users = load_users()
 
-    # Гарантируем наличие владельца
     if OWNER_ID:
         if str(OWNER_ID) not in users:
             users[str(OWNER_ID)] = {"role": "owner", "username": "Owner"}
             save_users(users)
 
-    # Сортируем: сначала owner → admin → mod → user
+    # Сортируем: сначала owner -> admin -> mod -> user
     role_order = {"owner": 0, "admin": 1, "mod": 2, "user": 3, "unknown": 9}
     sorted_users = sorted(
         users.items(),
@@ -259,8 +258,6 @@ def users_add():
 
     flash(f"Пользователь {uid} добавлен с ролью {role}", "success")
     return redirect(url_for("users_page"))
-
-
 
 @app.route("/users/setrole", methods=["POST"])
 @login_required
@@ -298,7 +295,6 @@ def users_delete(user_id: str):
         flash("Пользователь не найден", "danger")
     return redirect(url_for("users_page"))
 
-
 # ================== LOGS ==================
 @app.route("/logs")
 @login_required
@@ -329,7 +325,7 @@ def action_reset2fa():
 @login_required
 def action_reload():
     """
-    Обновляет кэш расписания через функции бота, если они есть.
+    Обновляет кэш расписания через функции бота
     """
     try:
         from bot import fetch_schedule, schedule_cache  # type: ignore
@@ -350,7 +346,7 @@ async def _reload_coro(fetch_schedule_func, schedule_cache_obj):
 @login_required
 def action_fullreload():
     """
-    Полная перезагрузка (расписание + преподаватели), если функции есть.
+    Полная перезагрузка (расписание + преподаватели)
     """
     try:
         from bot import fetch_schedule, schedule_cache, fetch_teachers, teachers_cache  # type: ignore
@@ -373,7 +369,6 @@ async def _fullreload_coro(fetch_schedule_func, schedule_cache_obj, fetch_teache
     try:
         await fetch_teachers_func(application)
     except Exception:
-        # если нет функции — тихо игнорируем
         pass
 
 @app.route("/control/broadcast", methods=["POST"])
@@ -407,7 +402,6 @@ async def _broadcast_coro(text: str, user_ids: list[str]):
             ok += 1
         except Exception:
             fail += 1
-    # Можно писать в лог
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().isoformat(timespec='seconds')}] broadcast: ok={ok}, fail={fail}\n")
