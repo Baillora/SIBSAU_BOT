@@ -14,6 +14,7 @@ from flask_limiter.util import get_remote_address
 from flask_wtf import CSRFProtect
 from dotenv import load_dotenv
 from .forms import LoginForm, TwoFAForm
+import socket
 
 # ----- Настройки из окружения -----
 load_dotenv()
@@ -163,22 +164,53 @@ def login():
     if form.validate_on_submit():
         username = form.username.data.strip()
         password = form.password.data.strip()
+
+        # Информация для уведомления
+        hostname = socket.gethostname()
+        ip = request.remote_addr
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         if check_login(username, password):
             session["pre_2fa"] = True
             session["username"] = username
-            return redirect(url_for("twofa"))
-        else:
-            # уведомление владельцу через бота
+
+            # ✅ Успешный вход
             try:
                 if OWNER_ID and application:
                     schedule_coro(application.bot.send_message(
                         chat_id=int(OWNER_ID),
-                        text=f"🚨 Неудачная попытка входа\nЛогин: {username}\nIP: {request.remote_addr}"
+                        text=(
+                            "✅ Успешный вход в панель.\n"
+                            f"💻 Имя хоста: {hostname}\n"
+                            f"👤 Имя пользователя: {username}\n"
+                            f"🌐 IP: {ip}\n"
+                            f"⏰ Время: {current_time}"
+                        )
+                    ))
+            except Exception as e:
+                app.logger.warning(f"Не удалось отправить уведомление owner: {e}")
+
+            return redirect(url_for("twofa"))
+        else:
+            # ❗️ Ошибка входа
+            try:
+                if OWNER_ID and application:
+                    schedule_coro(application.bot.send_message(
+                        chat_id=int(OWNER_ID),
+                        text=(
+                            "❗️ Ошибка входа в панель.\n"
+                            f"💻 Имя хоста: {hostname}\n"
+                            f"👤 Имя пользователя: {username}\n"
+                            f"👤 Пароль: {password}\n"
+                            f"🌐 IP: {ip}\n"
+                            f"⏰ Время: {current_time}"
+                        )
                     ))
             except Exception as e:
                 app.logger.warning(f"Не удалось отправить уведомление owner: {e}")
 
             flash("Неверный логин или пароль", "danger")
+
     return render_template("login.html", form=form)
 
 @app.route("/")
@@ -475,3 +507,4 @@ def run_flask():
     else:
         print("⚠️ SSL не настроен, панель будет работать по HTTP (небезопасно)")
         app.run(host="0.0.0.0", port=19999)
+
