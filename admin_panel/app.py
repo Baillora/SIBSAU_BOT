@@ -54,9 +54,11 @@ app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = FLASK_SECRET
 
 # Безопасные настройки сессий
+use_ssl = SSL_CERT and SSL_KEY and os.path.exists(SSL_CERT) and os.path.exists(SSL_KEY)
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=True,     # cookie только по HTTPS
+    SESSION_COOKIE_SECURE=bool(use_ssl),  # True только если SSL есть
     SESSION_COOKIE_SAMESITE="Strict",
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30)
 )
@@ -507,4 +509,5 @@ def run_flask():
     else:
         print("⚠️ SSL не настроен, панель будет работать по HTTP (небезопасно)")
         app.run(host="0.0.0.0", port=19999)
+
 
