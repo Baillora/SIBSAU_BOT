@@ -1,4 +1,4 @@
-﻿# --- Telegram Bot ---
+# --- Telegram Bot ---
 python-telegram-bot==20.3
 httpx==0.24.1
 requests==2.27.1
