@@ -61,7 +61,7 @@ def create_mock_update(user_id: int, text: str = "", is_callback: bool = False):
     chat = Chat(id=user_id, type="private")
 
     if is_callback:
-        query = AsyncMock()  # ← AsyncMock, не MagicMock!
+        query = AsyncMock()
         query.from_user = user
         query.message = Message(message_id=1, date=None, chat=chat, from_user=user, text="")
         query.message.set_bot(bot)
@@ -73,4 +73,5 @@ def create_mock_update(user_id: int, text: str = "", is_callback: bool = False):
 
     context = AsyncMock()
     context.bot = bot
+
     return update, context, bot
