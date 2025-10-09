@@ -214,5 +214,6 @@ async def map_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats.increment_command(uid)
     stats.save()
 
-    await update.message.reply_text("🗺 Карта корпусов: https://www.sibsau.ru/about/campus/map")
+    await update.message.reply_text("🗺 Карта корпусов: https://cloud.sibsau.ru/s/KsYWFjEig2emNwH")
     logger.info(f"✅ {username} ({uid}) запросил карту корпусов.")
+
