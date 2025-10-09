@@ -8,7 +8,7 @@ where /Q curl || (
 
 echo Downloading latest SIBSAU BOT
 
-git clone https://github.com/Baillora/SIBSAU_BOT.git
+https://github.com/Baillora/SIBSAU_BOT/releases/latest/download/bot.zip
 
 if errorlevel 1 (
     echo There was some error trying to download
