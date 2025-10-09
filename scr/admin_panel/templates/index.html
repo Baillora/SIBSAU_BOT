@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+  <h3 class="mb-4"><i class="fa-solid fa-chart-line"></i> Статистика</h3>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card text-center shadow-sm">
+        <div class="card-body">
+          <div class="h6 text-muted">Уникальные пользователи</div>
+          <div class="display-6 fw-bold text-primary">{{ totals.unique_users_count }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card text-center shadow-sm">
+        <div class="card-body">
+          <div class="h6 text-muted">Сообщений всего</div>
+          <div class="display-6 fw-bold text-success">{{ totals.total_messages }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card text-center shadow-sm">
+        <div class="card-body">
+          <div class="h6 text-muted">Запросов расписания</div>
+          <div class="display-6 fw-bold text-warning">{{ totals.schedule_requests }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card text-center shadow-sm">
+        <div class="card-body">
+          <div class="h6 text-muted">Команд выполнено</div>
+          <div class="display-6 fw-bold text-info">{{ totals.commands_executed }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card text-center shadow-sm">
+        <div class="card-body">
+          <div class="h6 text-muted">Поисковых запросов</div>
+          <div class="display-6 fw-bold text-dark">{{ totals.search_queries }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card text-center shadow-sm">
+        <div class="card-body">
+          <div class="h6 text-muted">Ошибок</div>
+          <div class="display-6 fw-bold text-danger">{{ totals.errors }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <h6 class="mb-3"><i class="fa-solid fa-clock"></i> Активность по часам</h6>
+      <canvas id="usageChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <h6 class="mb-3"><i class="fa-solid fa-user-gear"></i> Команды по пользователям</h6>
+      <canvas id="commandsPerUserChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h6 class="mb-3"><i class="fa-solid fa-calendar-days"></i> Активность по дням</h6>
+      <canvas id="dailyActiveUsersChart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const peak = {{ peak_usage|tojson }};
+    const labels = Object.keys(peak);
+    const data = Object.values(peak);
+
+    new Chart(document.getElementById('usageChart'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Команд',
+          data: data,
+          backgroundColor: 'rgba(54, 162, 235, 0.6)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: { scales: { y: { beginAtZero: true } } }
+    });
+
+    const commandsPerUser = {{ commands_per_user|tojson }};
+    const userLabels = Object.keys(commandsPerUser);
+    const userData = Object.values(commandsPerUser);
+
+    new Chart(document.getElementById('commandsPerUserChart'), {
+      type: 'bar',
+      data: {
+        labels: userLabels,
+        datasets: [{
+          label: 'Количество команд',
+          data: userData,
+          backgroundColor: 'rgba(255, 159, 64, 0.6)',
+          borderColor: 'rgba(255, 159, 64, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        scales: { x: { beginAtZero: true } }
+      }
+    });
+
+    const dailyActiveUsers = {{ daily_active_users|tojson }};
+    const dayLabels = Object.keys(dailyActiveUsers);
+    const dayData = Object.values(dailyActiveUsers).map(users => users.length);
+
+    new Chart(document.getElementById('dailyActiveUsersChart'), {
+      type: 'line',
+      data: {
+        labels: dayLabels,
+        datasets: [{
+          label: 'Активные пользователи',
+          data: dayData,
+          borderColor: 'rgba(75, 192, 192, 1)',
+          backgroundColor: 'rgba(75, 192, 192, 0.2)',
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: { scales: { y: { beginAtZero: true } } }
+    });
+  </script>
+{% endblock %}

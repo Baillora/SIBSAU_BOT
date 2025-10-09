@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+  <h3 class="mb-4"><i class="fa-solid fa-users"></i> Пользователи</h3>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <form class="row g-2" method="post" action="{{ url_for('users_add') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-4">
+          <input name="user_id" class="form-control" placeholder="Telegram user id" required>
+        </div>
+        <div class="col-md-4">
+          <select name="role" class="form-select">
+            <option value="user">user</option>
+            <option value="mod">mod</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <button class="btn btn-primary w-100"><i class="fa-solid fa-plus"></i> Добавить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>ID</th>
+              <th>Username</th>
+              <th>Роль</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for uid, data in users %}
+            <tr>
+              <td class="text-monospace">{{ uid }}</td>
+              <td>{{ data.username or "—" }}</td>
+              <td>
+                {% if data.role == 'owner' %}
+                  <span class="badge bg-dark">owner</span>
+                {% else %}
+                  <form class="d-flex" method="post" action="{{ url_for('users_setrole') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="user_id" value="{{ uid }}">
+                    <select name="role" class="form-select me-2">
+                      <option value="user"  {% if data.role=='user' %}selected{% endif %}>user</option>
+                      <option value="mod"   {% if data.role=='mod' %}selected{% endif %}>mod</option>
+                      <option value="admin" {% if data.role=='admin' %}selected{% endif %}>admin</option>
+                    </select>
+                    <button class="btn btn-outline-secondary btn-sm"><i class="fa-solid fa-save"></i></button>
+                  </form>
+                {% endif %}
+              </td>
+              <td>
+                {% if data.role != 'owner' %}
+                  <form method="post" action="{{ url_for('users_delete', user_id=uid) }}" onsubmit="return confirm('Удалить пользователя {{ uid }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-outline-danger btn-sm"><i class="fa-solid fa-trash"></i> Удалить</button>
+                  </form>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

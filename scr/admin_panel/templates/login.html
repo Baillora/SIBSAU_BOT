@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card shadow-lg p-4" style="max-width:400px; margin:auto;">
+    <h4 class="text-center mb-4"><i class="fa-solid fa-lock"></i> Вход в панель</h4>
+    <form method="post">
+      {{ form.hidden_tag() }}
+      <div class="mb-3">
+        {{ form.username.label }}
+        {{ form.username(class="form-control") }}
+      </div>
+      <div class="mb-3">
+        {{ form.password.label }}
+        {{ form.password(class="form-control") }}
+      </div>
+      {{ form.submit(class="btn btn-primary w-100") }}
+    </form>
+    <div class="pt-3">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }} mt-2">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+  </div>
+{% endblock %}
