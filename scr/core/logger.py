@@ -1,13 +1,27 @@
 import logging
 import sys
+import re
+from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from scr.core.settings import LOG_FILE
+from scr.core.settings import LOG_FILE, LOG_LEVEL
+
+# Регулярное выражение для поиска и маскирования токенов Telegram Bot API
+TOKEN_REGEX = re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")
+
 
 class TelegramFilter(logging.Filter):
-    def filter(self, record):
-        return "https://api.telegram.org" not in record.getMessage()
+    """Фильтрует и маскирует токены Telegram Bot API и конфиденциальные данные в логах"""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = TOKEN_REGEX.sub("<BOT_TOKEN_REDACTED>", record.msg)
+            # Скрываем прямые обращения к api.telegram.org с токенами
+            if "api.telegram.org/bot" in record.msg:
+                record.msg = re.sub(r"bot[^\s/]+", "bot<REDACTED>", record.msg)
+        return True
 
-def setup_logger():
+
+def setup_logger(name: str = "bot") -> logging.Logger:
+    """Настройка логгера с выводом в консоль, ротацией и фильтрацией конфиденциальных данных"""
     formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
@@ -17,9 +31,12 @@ def setup_logger():
     console_handler.setFormatter(formatter)
     console_handler.addFilter(TelegramFilter())
 
+    log_path = Path(LOG_FILE)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
     file_handler = RotatingFileHandler(
-        LOG_FILE,
-        maxBytes=1 * 1024 * 1024,
+        log_path,
+        maxBytes=2 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8"
     )
@@ -27,18 +44,19 @@ def setup_logger():
     file_handler.setFormatter(formatter)
     file_handler.addFilter(TelegramFilter())
 
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
+    logger_instance = logging.getLogger(name)
+    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    logger_instance.setLevel(level)
+
+    for handler in logger_instance.handlers[:]:
         handler.close()
-        root_logger.removeHandler(handler)
+        logger_instance.removeHandler(handler)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        handlers=[console_handler, file_handler],
-        force=True
-    )
+    logger_instance.addHandler(console_handler)
+    logger_instance.addHandler(file_handler)
+    logger_instance.propagate = True
 
-    return logging.getLogger("bot")
+    return logger_instance
 
-# Инициализация при импорте
+
 logger = setup_logger()

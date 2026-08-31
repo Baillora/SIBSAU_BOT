@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h2 class="fw-bold mb-1"><i class="fa-solid fa-calendar-days text-primary me-2"></i>Расписание занятий</h2>
+    <p class="text-muted mb-0">Актуальный кэш расписания группы с портала СибГУ</p>
+  </div>
+  <form method="POST" action="{{ url_for('action_reload') }}" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-outline-primary shadow-sm">
+      <i class="fa-solid fa-arrows-rotate me-1"></i> Обновить кэш
+    </button>
+  </form>
+</div>
+
+<!-- Вкладки недель -->
+<ul class="nav nav-pills mb-4 gap-2" id="scheduleTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active px-4 py-2" id="week1-tab" data-bs-toggle="pill" data-bs-target="#week1-content" type="button" role="tab">
+      <i class="fa-solid fa-1 me-1"></i> 1-я неделя (Нечётная)
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link px-4 py-2" id="week2-tab" data-bs-toggle="pill" data-bs-target="#week2-content" type="button" role="tab">
+      <i class="fa-solid fa-2 me-1"></i> 2-я неделя (Чётная)
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link px-4 py-2" id="session-tab" data-bs-toggle="pill" data-bs-target="#session-content" type="button" role="tab">
+      <i class="fa-solid fa-graduation-cap me-1"></i> Сессия
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="scheduleTabsContent">
+  <!-- Вкладка Недели 1 -->
+  <div class="tab-pane fade show active" id="week1-content" role="tabpanel">
+    {% if schedule and schedule.get('week_1') %}
+      <div class="row g-4">
+        {% for day in weekdays %}
+          {% set lessons = schedule.get('week_1', {}).get(day, []) %}
+          <div class="col-lg-6">
+            <div class="card h-100 border-0 shadow-sm">
+              <div class="card-header bg-body-tertiary fw-bold py-3 d-flex justify-content-between align-items-center">
+                <span><i class="fa-regular fa-calendar me-2 text-primary"></i>{{ day }}</span>
+                <span class="badge bg-primary rounded-pill">{{ lessons|length }} пар</span>
+              </div>
+              <div class="card-body p-0">
+                {% if lessons %}
+                  <div class="list-group list-group-flush">
+                    {% for l in lessons %}
+                      <div class="list-group-item p-3">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                          <span class="badge bg-secondary-subtle text-body border fw-bold px-2 py-1">
+                            <i class="fa-regular fa-clock me-1"></i>{{ l.time }}
+                          </span>
+                          {% if l.subgroup %}
+                            <span class="badge bg-warning-subtle text-warning border px-2 py-1">
+                              {{ l.subgroup }}
+                            </span>
+                          {% endif %}
+                        </div>
+                        <div class="fw-semibold text-break mb-1">{{ l.info }}</div>
+                        {% if l.classroom %}
+                          <div class="text-muted small">
+                            <i class="fa-solid fa-location-dot text-danger me-1"></i>{{ l.classroom }}
+                          </div>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div class="p-4 text-center text-muted">
+                    <i class="fa-solid fa-bed fs-4 mb-2 d-block text-secondary"></i>
+                    Нет пар в этот день
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-info shadow-sm">Кэш расписания для 1-й недели пуст. Нажмите «Обновить кэш».</div>
+    {% endif %}
+  </div>
+
+  <!-- Вкладка Недели 2 -->
+  <div class="tab-pane fade" id="week2-content" role="tabpanel">
+    {% if schedule and schedule.get('week_2') %}
+      <div class="row g-4">
+        {% for day in weekdays %}
+          {% set lessons = schedule.get('week_2', {}).get(day, []) %}
+          <div class="col-lg-6">
+            <div class="card h-100 border-0 shadow-sm">
+              <div class="card-header bg-body-tertiary fw-bold py-3 d-flex justify-content-between align-items-center">
+                <span><i class="fa-regular fa-calendar me-2 text-primary"></i>{{ day }}</span>
+                <span class="badge bg-primary rounded-pill">{{ lessons|length }} пар</span>
+              </div>
+              <div class="card-body p-0">
+                {% if lessons %}
+                  <div class="list-group list-group-flush">
+                    {% for l in lessons %}
+                      <div class="list-group-item p-3">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                          <span class="badge bg-secondary-subtle text-body border fw-bold px-2 py-1">
+                            <i class="fa-regular fa-clock me-1"></i>{{ l.time }}
+                          </span>
+                          {% if l.subgroup %}
+                            <span class="badge bg-warning-subtle text-warning border px-2 py-1">
+                              {{ l.subgroup }}
+                            </span>
+                          {% endif %}
+                        </div>
+                        <div class="fw-semibold text-break mb-1">{{ l.info }}</div>
+                        {% if l.classroom %}
+                          <div class="text-muted small">
+                            <i class="fa-solid fa-location-dot text-danger me-1"></i>{{ l.classroom }}
+                          </div>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div class="p-4 text-center text-muted">
+                    <i class="fa-solid fa-bed fs-4 mb-2 d-block text-secondary"></i>
+                    Нет пар в этот день
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-info shadow-sm">Кэш расписания для 2-й недели пуст. Нажмите «Обновить кэш».</div>
+    {% endif %}
+  </div>
+
+  <!-- Вкладка Сессии -->
+  <div class="tab-pane fade" id="session-content" role="tabpanel">
+    {% if schedule and schedule.get('session') %}
+      <div class="row g-4">
+        {% for day, lessons in schedule.get('session', {}).items() %}
+          <div class="col-lg-6">
+            <div class="card h-100 border-0 shadow-sm">
+              <div class="card-header bg-body-tertiary fw-bold py-3">
+                <i class="fa-solid fa-award text-warning me-2"></i>{{ day }}
+              </div>
+              <div class="card-body p-0">
+                {% if lessons %}
+                  <div class="list-group list-group-flush">
+                    {% for l in lessons %}
+                      <div class="list-group-item p-3">
+                        <span class="badge bg-secondary-subtle text-body border fw-bold px-2 py-1 mb-2">
+                          <i class="fa-regular fa-clock me-1"></i>{{ l.time }}
+                        </span>
+                        <div class="fw-semibold">{{ l.info }}</div>
+                        {% if l.classroom %}
+                          <div class="text-muted small mt-1">
+                            <i class="fa-solid fa-location-dot text-danger me-1"></i>{{ l.classroom }}
+                          </div>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div class="p-4 text-center text-muted">Экзаменов нет</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="card border-0 shadow-sm p-5 text-center">
+        <i class="fa-solid fa-circle-check text-success fs-1 mb-3"></i>
+        <h5 class="fw-bold">Расписание сессии временно отсутствует</h5>
+        <p class="text-muted mb-0">Информация появится автоматически при обновлении расписания на сайте вуза.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

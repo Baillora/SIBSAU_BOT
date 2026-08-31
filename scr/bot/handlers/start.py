@@ -1,225 +1,200 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from scr.core.stats import stats, save_stats, increment_user_commands, record_peak_usage, record_daily_active
-from scr.core.users import UserManager, get_user_role, is_user_allowed
-from scr.parsers.schedule_parser import get_current_week_and_day, fetch_schedule, get_current_and_next_lesson
-from scr.core.settings import OWNER_ID
+
+from scr.parsers.schedule_parser import (
+    get_current_week_and_day,
+    fetch_schedule,
+    get_current_and_next_lesson,
+)
+from scr.core.settings import LESSON_SCHEDULE
+from scr.core.users import user_manager
 from scr.core.logger import logger
+from scr.bot.handlers.utils import safe_edit_message, require_auth, render_progress_bar
 
-users = UserManager(owner_id=OWNER_ID)
 
-
-# /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    uid = update.effective_user.id
-    username = update.effective_user.username or update.effective_user.full_name
-
-    # Сбор статистики
-    stats['unique_users'].add(uid)
-    stats['total_messages'] += 1
-    increment_user_commands(uid)
-    record_peak_usage()
-    record_daily_active(uid)
-    stats['commands_executed'] += 1
-    save_stats()
-
-    if not is_user_allowed(uid):
-        logger.warning(f"❌ Неавторизованный пользователь {username} ({uid}) вызвал /start.")
-        try:
-            owner_user = await context.bot.get_chat(OWNER_ID)
-            owner_username = f"@{owner_user.username}" if owner_user.username else owner_user.full_name
-        except Exception as e:
-            logger.error(f"Ошибка при получении информации о владельце: {e}")
-            owner_username = "администратору"
-
-        await update.message.reply_text(
-            f"Ваш ID: {uid}\n\n"
-            f"Для использования бота сообщите ваш ID {owner_username}.\n\n"
-            "Разработчик @lssued"
-        )
-        return
-
-    # Авторизованный пользователь
-    role = get_user_role(uid)
-    logger.info(f"✅ {username} ({uid}) [{role}] вызвал /start.")
-
-    # Получаем данные о дне и расписании
+async def build_start_payload(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Генерация приветственного сообщения и клавиатуры главного меню с виджетами"""
     date_str, day_name, current_week = get_current_week_and_day()
     schedule = await fetch_schedule(context.application)
     current_lesson, time_until_current_end, next_lesson, time_until_next = get_current_and_next_lesson(
         schedule, current_week, day_name
     )
-    # Конец получения данных
+
+    subgroup = user_manager.get_subgroup(user_id)
+    subgroup_label = f"{subgroup}-я подгруппа" if subgroup in ("1", "2") else "Все подгруппы"
+
+    notifications = user_manager.get_notifications(user_id)
+    notif_label = "🔔 Вкл" if notifications else "🔕 Выкл"
 
     week_text = "1-ая неделя" if current_week == 'week_1' else "2-ая неделя"
-    welcome_message = f"⏱️ Сегодня: {date_str}, {day_name}, {week_text}.\n\n"
+    header = (
+        f"⏱️ Сегодня: *{date_str or 'Не определено'}*, {day_name or ''} ({week_text})\n"
+        f"👥 Фильтр: *{subgroup_label}* | 🔔 Уведомления: *{notif_label}*\n\n"
+    )
+    welcome_message = header
 
     if current_lesson:
-        info_lines = [ln for ln in (current_lesson.get("info") or "").split("\n") if ln.strip()]
+        info_lines = [ln.strip() for ln in (current_lesson.get("info") or "").split("\n") if ln.strip()]
         subject = info_lines[0].replace('*', '').strip() if info_lines else "Без названия"
-        subgroup = current_lesson.get("subgroup", "")
+        l_subgroup = current_lesson.get("subgroup", "")
         classroom = current_lesson.get("classroom", "")
-        welcome_message += f"🎓 Сейчас идёт: *{subject}*\n"
+
+        # Расчет времени для прогресс-бара
+        import datetime
+        now = datetime.datetime.now()
+        cur_min = now.hour * 60 + now.minute
+        progress_str = ""
+        for s_min, e_min in LESSON_SCHEDULE:
+            if s_min <= cur_min < e_min:
+                progress_str = render_progress_bar(cur_min, s_min, e_min)
+                break
+
+        welcome_message += f"🟢 *Сейчас идёт пара:*\n📚 *{subject}*\n"
+        if progress_str:
+            welcome_message += f"⏳ {progress_str}\n"
         if time_until_current_end is not None:
-            mins = time_until_current_end
-            hours, minutes = divmod(mins, 60)
-            if hours > 0:
-                end_str = f"{hours} ч {minutes} мин"
-            else:
-                end_str = f"{minutes} мин"
-            welcome_message += f"⏳ До конца: *{end_str}*\n"
-        if subgroup:
-            welcome_message += f"🔸 {subgroup}\n"
+            hours, minutes = divmod(time_until_current_end, 60)
+            end_str = f"{hours} ч {minutes} мин" if hours > 0 else f"{minutes} мин"
+            welcome_message += f"⏱️ До конца: *{end_str}*\n"
+        if l_subgroup:
+            welcome_message += f"🔸 {l_subgroup}\n"
         if classroom:
             welcome_message += f"📍 {classroom}\n"
         welcome_message += "\n"
-
     else:
-        welcome_message += "🎓 Сейчас пар нет.\n\n"
+        welcome_message += "⚪ *Сейчас пар нет.*\n\n"
 
-    # Всегда показываем следующую пару (если есть)
+    # Следующая пара
     if next_lesson is not None and time_until_next is not None:
         total_minutes = time_until_next
-        if total_minutes < 0:
-            pass
-        elif total_minutes == 0:
-            welcome_message += "🔜 Следующая пара *начинается сейчас*!\n\n"
+        if total_minutes <= 0:
+            welcome_message += "🔜 Следующая пара *начинается прямо сейчас*!\n\n"
         else:
             hours, minutes = divmod(total_minutes, 60)
-            if hours > 0:
-                time_str = f"{hours} ч {minutes} мин"
-            else:
-                time_str = f"{minutes} мин"
-            info_lines = [ln for ln in (next_lesson.get("info") or "").split("\n") if ln.strip()]
+            time_str = f"{hours} ч {minutes} мин" if hours > 0 else f"{minutes} мин"
+            info_lines = [ln.strip() for ln in (next_lesson.get("info") or "").split("\n") if ln.strip()]
             subject = info_lines[0].replace('*', '').strip() if info_lines else "Без названия"
-            subgroup = next_lesson.get("subgroup", "")
+            l_subgroup = next_lesson.get("subgroup", "")
             classroom = next_lesson.get("classroom", "")
+
             welcome_message += f"🔜 Следующая пара через *{time_str}*:\n📚 *{subject}*\n"
-            if subgroup:
-                welcome_message += f"🔸 {subgroup}\n"
+            if l_subgroup:
+                welcome_message += f"🔸 {l_subgroup}\n"
             if classroom:
                 welcome_message += f"📍 {classroom}\n"
             welcome_message += "\n"
     elif not current_lesson:
-        welcome_message += "🔚 Сегодня больше пар нет.\n\n"
+        welcome_message += "🔚 *Сегодня больше пар нет.*\n\n"
 
-    welcome_message += "💻 Разработчик @lssued\n\n🤖 https://github.com/Baillora"
+    welcome_message += "💻 Разработчик @lssued | 🤖 [GitHub](https://github.com/Baillora/SIBSAU_BOT)"
 
     keyboard = [
         [
-            InlineKeyboardButton("1 неделя", callback_data='week_1'),
-            InlineKeyboardButton("2 неделя", callback_data='week_2'),
-            InlineKeyboardButton("Сессия", callback_data='session')
+            InlineKeyboardButton("1️⃣ 1 неделя", callback_data='week_1'),
+            InlineKeyboardButton("2️⃣ 2 неделя", callback_data='week_2'),
+            InlineKeyboardButton("🎓 Сессия", callback_data='session')
         ],
         [
-            InlineKeyboardButton("Сегодня", callback_data='today'),
-            InlineKeyboardButton("Завтра", callback_data='tomorrow')
+            InlineKeyboardButton("📅 Сегодня", callback_data='today'),
+            InlineKeyboardButton("🔜 Завтра", callback_data='tomorrow')
         ],
         [
-            InlineKeyboardButton("Преподаватели", callback_data='teachers_list')
+            InlineKeyboardButton("👨‍🏫 Преподаватели", callback_data='teachers_list'),
+            InlineKeyboardButton("📥 Календарь (.ics)", callback_data='export_ics')
+        ],
+        [
+            InlineKeyboardButton("👥 Моя подгруппа", callback_data='menu_subgroup'),
+            InlineKeyboardButton(f"🔔 Уведомления ({'Вкл' if notifications else 'Выкл'})", callback_data='toggle_notif')
         ]
     ]
 
-    await update.message.reply_text(welcome_message, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    return welcome_message, InlineKeyboardMarkup(keyboard)
 
 
-# Хэндлер для кнопки "Назад"
+@require_auth
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /start"""
+    uid = update.effective_user.id
+    username = update.effective_user.username or update.effective_user.full_name
+    role = user_manager.get_role(uid)
+
+    logger.info(f"✅ {username} ({uid}) [{role}] вызвал /start.")
+    welcome_message, markup = await build_start_payload(uid, context)
+
+    if update.message:
+        await update.message.reply_text(welcome_message, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
+
+
+@require_auth
 async def back_to_week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки возврата в главное меню"""
     query = update.callback_query
     uid = query.from_user.id
     username = query.from_user.username or query.from_user.full_name
 
-    if not is_user_allowed(uid):
-        await query.answer("У вас нет доступа к боту.", show_alert=True)
-        logger.warning(f"❌ {username} ({uid}) попытался вернуться в главное меню без доступа.")
-        return
+    await query.answer()
+    welcome_message, markup = await build_start_payload(uid, context)
+    await safe_edit_message(query, welcome_message, reply_markup=markup)
+    logger.info(f"✅ {username} ({uid}) вернулся в главное меню.")
 
+
+@require_auth
+async def menu_subgroup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Меню выбора подгруппы"""
+    query = update.callback_query
+    uid = query.from_user.id
     await query.answer()
 
-    # Получаем данные о дне и расписании
-    date_str, day_name, current_week = get_current_week_and_day()
-    schedule = await fetch_schedule(context.application)
-    current_lesson, time_until_current_end, next_lesson, time_until_next = get_current_and_next_lesson(
-        schedule, current_week, day_name
+    cur_subgroup = user_manager.get_subgroup(uid)
+    text = (
+        "👥 *Настройка подгруппы:*\n\n"
+        "Выберите вашу подгруппу, чтобы в расписании отображались только ваши лабораторные занятия:\n\n"
+        f"Текущий выбор: *{'1-я подгруппа' if cur_subgroup == '1' else ('2-я подгруппа' if cur_subgroup == '2' else 'Все подгруппы')}*"
     )
-    # Конец получения данных
-
-    week_text = "1-ая неделя" if current_week == 'week_1' else "2-ая неделя"
-    welcome_message = f"⏱️ Сегодня: {date_str}, {day_name}, {week_text}.\n\n"
-
-    if current_lesson:
-        info_lines = [ln for ln in (current_lesson.get("info") or "").split("\n") if ln.strip()]
-        subject = info_lines[0].replace('*', '').strip() if info_lines else "Без названия"
-        subgroup = current_lesson.get("subgroup", "")
-        classroom = current_lesson.get("classroom", "")
-        welcome_message += f"🎓 Сейчас идёт: *{subject}*\n"
-        if time_until_current_end is not None:
-            mins = time_until_current_end
-            hours, minutes = divmod(mins, 60)
-            if hours > 0:
-                end_str = f"{hours} ч {minutes} мин"
-            else:
-                end_str = f"{minutes} мин"
-            welcome_message += f"⏳ До конца: *{end_str}*\n"
-        if subgroup:
-            welcome_message += f"🔸 {subgroup}\n"
-        if classroom:
-            welcome_message += f"📍 {classroom}\n"
-        welcome_message += "\n"
-
-    else:
-        welcome_message += "🎓 Сейчас пар нет.\n\n"
-
-    # Всегда показываем следующую пару (если есть)
-    if next_lesson is not None and time_until_next is not None:
-        total_minutes = time_until_next
-        if total_minutes < 0:
-            pass
-        elif total_minutes == 0:
-            welcome_message += "🔜 Следующая пара *начинается сейчас*!\n\n"
-        else:
-            hours, minutes = divmod(total_minutes, 60)
-            if hours > 0:
-                time_str = f"{hours} ч {minutes} мин"
-            else:
-                time_str = f"{minutes} мин"
-            info_lines = [ln for ln in (next_lesson.get("info") or "").split("\n") if ln.strip()]
-            subject = info_lines[0].replace('*', '').strip() if info_lines else "Без названия"
-            subgroup = next_lesson.get("subgroup", "")
-            classroom = next_lesson.get("classroom", "")
-            welcome_message += f"🔜 Следующая пара через *{time_str}*:\n📚 *{subject}*\n"
-            if subgroup:
-                welcome_message += f"🔸 {subgroup}\n"
-            if classroom:
-                welcome_message += f"📍 {classroom}\n"
-            welcome_message += "\n"
-    elif not current_lesson:
-        welcome_message += "🔚 Сегодня больше пар нет.\n\n"
-
-    welcome_message += "💻 Разработчик @lssued\n\n🤖 https://github.com/Baillora"
 
     keyboard = [
         [
-            InlineKeyboardButton("1 неделя", callback_data='week_1'),
-            InlineKeyboardButton("2 неделя", callback_data='week_2'),
-            InlineKeyboardButton("Сессия", callback_data='session')
+            InlineKeyboardButton("1️⃣ 1-я подгруппа", callback_data='set_subgroup_1'),
+            InlineKeyboardButton("2️⃣ 2-я подгруппа", callback_data='set_subgroup_2'),
         ],
         [
-            InlineKeyboardButton("Сегодня", callback_data='today'),
-            InlineKeyboardButton("Завтра", callback_data='tomorrow')
+            InlineKeyboardButton("👥 Показать все", callback_data='set_subgroup_all'),
         ],
         [
-            InlineKeyboardButton("Преподаватели", callback_data='teachers_list')
+            InlineKeyboardButton("⬅ Назад", callback_data='back_to_week')
         ]
     ]
 
-    try:
-        await query.edit_message_text(
-            text=welcome_message,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-        logger.info(f"✅ {username} ({uid}) вернулся в главное меню.")
-    except Exception as e:
-        logger.error(f"Ошибка при редактировании сообщения в back_to_week: {e}")
-        await query.message.reply_text("Ошибка при обновлении меню.")
+    await safe_edit_message(query, text, InlineKeyboardMarkup(keyboard))
+
+
+@require_auth
+async def set_subgroup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Установка выбранной подгруппы"""
+    query = update.callback_query
+    uid = query.from_user.id
+    data = query.data  # set_subgroup_1 / set_subgroup_2 / set_subgroup_all
+    sub = data.replace("set_subgroup_", "")
+
+    user_manager.set_subgroup(uid, sub)
+    await query.answer(f"Подгруппа сохранена: {sub if sub != 'all' else 'все'}", show_alert=False)
+
+    welcome_message, markup = await build_start_payload(uid, context)
+    await safe_edit_message(query, welcome_message, reply_markup=markup)
+
+
+@require_auth
+async def toggle_notifications_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Переключение статуса утренних уведомлений"""
+    query = update.callback_query
+    uid = query.from_user.id
+
+    cur = user_manager.get_notifications(uid)
+    new_val = not cur
+    user_manager.set_notifications(uid, new_val)
+
+    status_str = "включены" if new_val else "выключены"
+    await query.answer(f"Утренние уведомления {status_str}!", show_alert=False)
+
+    welcome_message, markup = await build_start_payload(uid, context)
+    await safe_edit_message(query, welcome_message, reply_markup=markup)

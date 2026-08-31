@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h2 class="fw-bold mb-1"><i class="fa-solid fa-sliders text-primary me-2"></i>Настройки системы</h2>
+        <p class="text-muted mb-0">Управление параметрами работы бота и расписания</p>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-body-tertiary fw-bold py-3">
+        <i class="fa-solid fa-gear me-2 text-primary"></i>Параметры бота
+      </div>
+      <div class="card-body p-4">
+        <form method="POST" action="{{ url_for('settings_panel') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <!-- SCHEDULE_URL -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">
+              <i class="fa-solid fa-link me-1 text-primary"></i> Ссылка на расписание (SCHEDULE_URL)
+            </label>
+            <input type="url" name="schedule_url" class="form-control" value="{{ settings.schedule_url }}" placeholder="https://timetable.pallada.sibsau.ru/timetable/group/..." required>
+            <div class="form-text">Ссылка на страницу расписания группы в АСУ Паллада.</div>
+          </div>
+
+          <!-- PLAN_URL -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">
+              <i class="fa-solid fa-file-pdf me-1 text-primary"></i> Ссылка на учебный план (PLAN_URL)
+            </label>
+            <input type="url" name="plan_url" class="form-control" value="{{ settings.plan_url }}" placeholder="https://cloud.sibsau.ru/...">
+            <div class="form-text">Ссылка на учебный план группы (необязательно).</div>
+          </div>
+
+          <!-- SEMESTER_START -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">
+              <i class="fa-solid fa-calendar-day me-1 text-primary"></i> Дата начала семестра (SEMESTER_START)
+            </label>
+            <input type="date" name="semester_start" class="form-control" value="{{ settings.semester_start }}">
+            <div class="form-text">Оставьте пустым для автоматического расчета (1 сентября осенью / 1 февраля весной).</div>
+          </div>
+
+          <!-- LOG_LEVEL -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">
+              <i class="fa-solid fa-bug me-1 text-primary"></i> Уровень логирования (LOG_LEVEL)
+            </label>
+            <select name="log_level" class="form-select">
+              <option value="INFO" {% if settings.log_level == 'INFO' %}selected{% endif %}>INFO (Стандартный)</option>
+              <option value="DEBUG" {% if settings.log_level == 'DEBUG' %}selected{% endif %}>DEBUG (Максимально подробный)</option>
+              <option value="WARNING" {% if settings.log_level == 'WARNING' %}selected{% endif %}>WARNING (Только предупреждения и ошибки)</option>
+              <option value="ERROR" {% if settings.log_level == 'ERROR' %}selected{% endif %}>ERROR (Только критические ошибки)</option>
+            </select>
+          </div>
+
+          <!-- OWNER_ID -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">
+              <i class="fa-solid fa-crown me-1 text-warning"></i> ID владельца (OWNER_ID)
+            </label>
+            <input type="text" class="form-control bg-body-secondary" value="{{ settings.owner_id }}" disabled readonly>
+            <div class="form-text">ID владельца задаётся через файл .env.</div>
+          </div>
+
+          <div class="d-flex justify-content-end">
+            <button type="submit" class="btn btn-primary px-4 py-2 fw-semibold shadow-sm">
+              <i class="fa-solid fa-floppy-disk me-1"></i> Сохранить настройки
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

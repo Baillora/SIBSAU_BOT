@@ -1,29 +1,90 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-bs-theme="light">
   <head>
     <meta charset="utf-8">
-    <title>Админ-панель бота</title>
+    <title>Админ-панель SIBSAU_BOT</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Bootswatch Lux -->
-    <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.2/dist/lux/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- FontAwesome -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+      body {
+        transition: background-color 0.3s, color 0.3s;
+      }
+      .navbar {
+        border-bottom: 1px solid rgba(0,0,0,0.1);
+      }
+      .card {
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      }
+      .table-card {
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .nav-link.active {
+        font-weight: 600;
+      }
+      [data-bs-theme="dark"] .card {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      }
+    </style>
   </head>
   <body>
     <!-- navbar -->
     {% if request.endpoint != "login" and request.endpoint != "twofa" %}
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
-      <div class="container-fluid">
-        <a class="navbar-brand fw-bold" href="{{ url_for('index') }}"><i class="fa-solid fa-gears"></i> Админка</a>
-        <div class="navbar-nav">
-          <a class="nav-link" href="{{ url_for('index') }}"><i class="fa-solid fa-chart-line"></i> Статистика</a>
-          <a class="nav-link" href="{{ url_for('users_page') }}"><i class="fa-solid fa-users"></i> Пользователи</a>
-          <a class="nav-link" href="{{ url_for('logs_page') }}"><i class="fa-solid fa-scroll"></i> Логи</a>
-          <a class="nav-link" href="{{ url_for('control_page') }}"><i class="fa-solid fa-sliders"></i> Управление</a>
-        </div>
-        <div class="d-flex">
-          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}"><i class="fa-solid fa-right-from-bracket"></i> Выйти</a>
+    <nav class="navbar navbar-expand-lg bg-body-tertiary sticky-top shadow-sm">
+      <div class="container">
+        <a class="navbar-brand fw-bold text-primary" href="{{ url_for('index') }}">
+          <i class="fa-solid fa-robot me-1"></i> SIBSAU_BOT
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navMenu">
+          <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'index' %}active text-primary{% endif %}" href="{{ url_for('index') }}">
+                <i class="fa-solid fa-chart-pie me-1"></i> Статистика
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'schedule_view' %}active text-primary{% endif %}" href="{{ url_for('schedule_view') }}">
+                <i class="fa-solid fa-calendar-days me-1"></i> Расписание
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'users_page' %}active text-primary{% endif %}" href="{{ url_for('users_page') }}">
+                <i class="fa-solid fa-users me-1"></i> Пользователи
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'logs_page' %}active text-primary{% endif %}" href="{{ url_for('logs_page') }}">
+                <i class="fa-solid fa-file-lines me-1"></i> Логи
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'settings_panel' %}active text-primary{% endif %}" href="{{ url_for('settings_panel') }}">
+                <i class="fa-solid fa-sliders me-1"></i> Настройки
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'control_page' %}active text-primary{% endif %}" href="{{ url_for('control_page') }}">
+                <i class="fa-solid fa-bolt me-1"></i> Управление
+              </a>
+            </li>
+          </ul>
+          <div class="d-flex align-items-center gap-2">
+            <!-- Переключатель темы -->
+            <button class="btn btn-outline-secondary btn-sm" id="themeToggle" type="button" title="Переключить тему">
+              <i class="fa-solid fa-moon" id="themeIcon"></i>
+            </button>
+            <a class="btn btn-outline-danger btn-sm" href="{{ url_for('logout') }}">
+              <i class="fa-solid fa-right-from-bracket me-1"></i> Выход
+            </a>
+          </div>
         </div>
       </div>
     </nav>
@@ -34,11 +95,42 @@
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
-            <div class="alert alert-{{ category }} shadow-sm">{{ message }}</div>
+            <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm" role="alert">
+              {{ message }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
           {% endfor %}
         {% endif %}
       {% endwith %}
       {% block content %}{% endblock %}
     </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      // Тема Dark / Light
+      const htmlEl = document.documentElement;
+      const themeToggleBtn = document.getElementById('themeToggle');
+      const themeIcon = document.getElementById('themeIcon');
+
+      function setTheme(theme) {
+        htmlEl.setAttribute('data-bs-theme', theme);
+        localStorage.setItem('theme', theme);
+        if (themeIcon) {
+          themeIcon.className = theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+        }
+      }
+
+      const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      setTheme(savedTheme);
+
+      if (themeToggleBtn) {
+        themeToggleBtn.addEventListener('click', () => {
+          const current = htmlEl.getAttribute('data-bs-theme');
+          setTheme(current === 'dark' ? 'light' : 'dark');
+        });
+      }
+    </script>
+    {% block scripts %}{% endblock %}
   </body>
 </html>

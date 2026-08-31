@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.tmp
+
+# Environment
+.env
+
+# Logs
+*.log
+warning.log
+
+# SSL & 2FA
+*.crt
+*.key
+2fa_status.json
+
+# Pytest
+.pytest_cache/
+
+# Data files (runtime generated)
+allowed_users.json
+stats.json
+notes.json

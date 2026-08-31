@@ -1,22 +1,55 @@
 {% extends "base.html" %}
 {% block content %}
-  <h3 class="mb-4"><i class="fa-solid fa-scroll"></i> Логи</h3>
-
-  <div class="d-flex align-items-center mb-3">
-    <button id="toggleAutoUpdate" class="btn btn-outline-primary me-2">
-      <i class="fa-solid fa-rotate"></i> Автообновление: выкл
-    </button>
-    <input id="intervalInput" type="number" class="form-control" value="5" min="1" style="width:100px">
-    <span class="ms-2">секунд</span>
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h2 class="fw-bold mb-1"><i class="fa-solid fa-file-lines text-primary me-2"></i>Журнал событий (Логи)</h2>
+      <p class="text-muted mb-0">Мониторинг событий, предупреждений и ошибок бота в реальном времени</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('logs_download') }}" class="btn btn-outline-secondary">
+        <i class="fa-solid fa-download me-1"></i> Скачать лог
+      </a>
+      <form method="POST" action="{{ url_for('logs_clear') }}" onsubmit="return confirm('Очистить весь лог-файл?')" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-outline-danger">
+          <i class="fa-solid fa-trash-can me-1"></i> Очистить
+        </button>
+      </form>
+    </div>
   </div>
 
-  <div class="card shadow-sm">
-    <div class="card-body bg-dark text-light" style="max-height:70vh; overflow:auto; font-family: monospace;">
-      <pre id="logContent" class="m-0">{{ logs }}</pre>
+  <!-- Фильтры и автообновление -->
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <!-- Фильтры уровней -->
+      <div class="btn-group btn-group-sm" role="group" id="logFilterGroup">
+        <button type="button" class="btn btn-primary active" data-filter="ALL">Все логи</button>
+        <button type="button" class="btn btn-outline-danger" data-filter="ERROR">ERROR</button>
+        <button type="button" class="btn btn-outline-warning" data-filter="WARNING">WARNING</button>
+        <button type="button" class="btn btn-outline-info" data-filter="INFO">INFO</button>
+      </div>
+
+      <!-- Автообновление -->
+      <div class="d-flex align-items-center gap-2">
+        <button id="toggleAutoUpdate" class="btn btn-outline-primary btn-sm">
+          <i class="fa-solid fa-rotate me-1"></i> Автообновление: выкл
+        </button>
+        <input id="intervalInput" type="number" class="form-control form-control-sm" value="5" min="1" max="60" style="width:70px">
+        <span class="text-muted small">сек</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Консоль логов -->
+  <div class="card border-0 shadow-sm">
+    <div class="card-body bg-dark text-light p-3" style="max-height:70vh; overflow:auto; font-family: 'Consolas', monospace; font-size: 0.88rem; border-radius: 8px;">
+      <pre id="logContent" class="m-0" style="white-space: pre-wrap; word-break: break-all;">{{ logs }}</pre>
     </div>
   </div>
 
   <script>
+    let rawLogText = {{ logs|tojson }};
+    let currentFilter = 'ALL';
     let autoUpdate = false;
     let intervalId = null;
 
@@ -24,23 +57,61 @@
     const toggleBtn = document.getElementById("toggleAutoUpdate");
     const intervalInput = document.getElementById("intervalInput");
 
+    function renderFilteredLogs() {
+      if (!rawLogText) {
+        logContent.textContent = "Лог-файл пуст.";
+        return;
+      }
+
+      if (currentFilter === 'ALL') {
+        logContent.textContent = rawLogText;
+        return;
+      }
+
+      const lines = rawLogText.split('\n');
+      const filtered = lines.filter(line => line.includes(`- ${currentFilter} -`) || line.includes(currentFilter));
+      logContent.textContent = filtered.length > 0 ? filtered.join('\n') : `Нет записей уровня ${currentFilter}.`;
+    }
+
+    // Обработчик кнопок фильтров
+    document.querySelectorAll('#logFilterGroup button').forEach(btn => {
+      btn.addEventListener('click', function() {
+        document.querySelectorAll('#logFilterGroup button').forEach(b => {
+          b.classList.remove('btn-primary', 'active');
+          b.classList.add(`btn-outline-${b.dataset.filter === 'ALL' ? 'primary' : (b.dataset.filter === 'ERROR' ? 'danger' : (b.dataset.filter === 'WARNING' ? 'warning' : 'info'))}`);
+        });
+
+        this.classList.remove('btn-outline-primary', 'btn-outline-danger', 'btn-outline-warning', 'btn-outline-info');
+        this.classList.add('btn-primary', 'active');
+
+        currentFilter = this.dataset.filter;
+        renderFilteredLogs();
+      });
+    });
+
     async function fetchLogs() {
-      const resp = await fetch("/logs?ajax=1");
-      const text = await resp.text();
-      logContent.textContent = text;
+      try {
+        const resp = await fetch("/logs?ajax=1");
+        if (resp.ok) {
+          rawLogText = await resp.text();
+          renderFilteredLogs();
+        }
+      } catch (e) {
+        console.error("Ошибка обновления логов:", e);
+      }
     }
 
     toggleBtn.addEventListener("click", () => {
       autoUpdate = !autoUpdate;
       if (autoUpdate) {
-        toggleBtn.textContent = "⏹ Автообновление: вкл";
+        toggleBtn.innerHTML = '<i class="fa-solid fa-square me-1"></i> Автообновление: вкл';
         toggleBtn.classList.remove("btn-outline-primary");
         toggleBtn.classList.add("btn-success");
 
         const seconds = parseInt(intervalInput.value) || 5;
         intervalId = setInterval(fetchLogs, seconds * 1000);
       } else {
-        toggleBtn.textContent = "🔄 Автообновление: выкл";
+        toggleBtn.innerHTML = '<i class="fa-solid fa-rotate me-1"></i> Автообновление: выкл';
         toggleBtn.classList.remove("btn-success");
         toggleBtn.classList.add("btn-outline-primary");
 
