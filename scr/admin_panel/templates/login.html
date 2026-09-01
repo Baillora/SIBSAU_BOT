@@ -88,5 +88,23 @@
       </form>
     </div>
   </div>
+
+  <!-- Плашка безопасности протокола (HTTP / HTTPS) -->
+  <div class="mt-4 pt-3 border-top text-center">
+    {% if request.is_secure or is_https %}
+      <div class="text-success small fw-semibold">
+        <i class="fa-solid fa-shield-halved me-1"></i> Соединение защищено шифрованием (HTTPS)
+      </div>
+    {% else %}
+      <div class="alert alert-warning py-2 px-3 mb-0 small text-start border-warning-subtle rounded-3">
+        <div class="d-flex align-items-center">
+          <i class="fa-solid fa-triangle-exclamation text-warning me-2 fs-5"></i>
+          <div>
+            <strong>Внимание:</strong> Панель работает по незащищенному протоколу <code>HTTP</code>. Для защиты паролей и сессий настройте SSL/HTTPS в настройках.
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
 </div>
 {% endblock %}

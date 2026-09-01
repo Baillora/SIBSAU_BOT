@@ -5,13 +5,13 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
       <div>
         <h2 class="fw-bold mb-1"><i class="fa-solid fa-sliders text-primary me-2"></i>Настройки системы</h2>
-        <p class="text-muted mb-0">Управление параметрами работы бота и расписания</p>
+        <p class="text-muted mb-0">Управление параметрами работы бота, расписания и безопасности</p>
       </div>
     </div>
 
     <div class="card border-0 shadow-sm mb-4">
       <div class="card-header bg-body-tertiary fw-bold py-3">
-        <i class="fa-solid fa-gear me-2 text-primary"></i>Параметры бота
+        <i class="fa-solid fa-gear me-2 text-primary"></i>Параметры бота и сервера
       </div>
       <div class="card-body p-4">
         <form method="POST" action="{{ url_for('settings_panel') }}">
@@ -55,6 +55,34 @@
               <option value="WARNING" {% if settings.log_level == 'WARNING' %}selected{% endif %}>WARNING (Только предупреждения и ошибки)</option>
               <option value="ERROR" {% if settings.log_level == 'ERROR' %}selected{% endif %}>ERROR (Только критические ошибки)</option>
             </select>
+          </div>
+
+          <!-- SSL CERTIFICATE & KEY CONFIGURATION -->
+          <div class="card border border-secondary-subtle p-3 mb-4 bg-body-tertiary rounded-3">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <span class="fw-bold"><i class="fa-solid fa-shield-halved me-1 text-primary"></i> SSL / HTTPS Сертификаты</span>
+              {% if settings.use_ssl %}
+                <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
+                  <i class="fa-solid fa-lock me-1"></i> HTTPS Активен
+                </span>
+              {% else %}
+                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1">
+                  <i class="fa-solid fa-lock-open me-1"></i> HTTP (Не защищено)
+                </span>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Путь к SSL сертификату (.crt / .pem)</label>
+              <input type="text" name="ssl_cert" class="form-control form-control-sm font-monospace" value="{{ settings.ssl_cert }}" placeholder="ssl/self_signed.crt или /etc/ssl/certs/server.crt">
+              <div class="form-text small">Относительный путь от корня проекта (например <code>ssl/self_signed.crt</code>) или абсолютный путь.</div>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small fw-semibold">Путь к приватному ключу (.key)</label>
+              <input type="text" name="ssl_key" class="form-control form-control-sm font-monospace" value="{{ settings.ssl_key }}" placeholder="ssl/self_signed.key или /etc/ssl/private/server.key">
+              <div class="form-text small">После сохранения путей перезапустите бота (<code>sudo systemctl restart sibsau_bot</code>).</div>
+            </div>
           </div>
 
           <!-- OWNER_ID -->

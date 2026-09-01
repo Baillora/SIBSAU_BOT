@@ -158,6 +158,7 @@ def role_required(*allowed_roles: str):
 @app.context_processor
 def inject_user_context():
     """Передача данных текущего пользователя во все шаблоны"""
+    has_ssl = bool(settings.SSL_CERT and settings.SSL_KEY and os.path.exists(settings.SSL_CERT) and os.path.exists(settings.SSL_KEY))
     if session.get("logged_in"):
         role = get_user_role()
         role_labels = {
@@ -172,6 +173,7 @@ def inject_user_context():
             "current_username": session.get("username", "Пользователь"),
             "current_tg_id": session.get("telegram_id"),
             "is_master_admin": session.get("is_master_admin", False),
+            "is_https": has_ssl,
         }
     return {
         "current_role": None,
@@ -179,6 +181,7 @@ def inject_user_context():
         "current_username": None,
         "current_tg_id": None,
         "is_master_admin": False,
+        "is_https": has_ssl,
     }
 
 
@@ -808,6 +811,8 @@ def settings_panel():
         new_plan = (request.form.get("plan_url") or "").strip()
         new_sem_start = (request.form.get("semester_start") or "").strip()
         new_log_level = (request.form.get("log_level") or "INFO").strip().upper()
+        new_ssl_cert = (request.form.get("ssl_cert") or "").strip()
+        new_ssl_key = (request.form.get("ssl_key") or "").strip()
 
         if new_sched and not is_safe_url(new_sched):
             flash("❌ Недопустимый URL для расписания (разрешены только http/https)", "danger")
@@ -825,15 +830,26 @@ def settings_panel():
         settings.SEMESTER_START = new_sem_start
         settings.LOG_LEVEL = new_log_level
 
+        if new_ssl_cert:
+            resolved_cert = settings._resolve_ssl_path(new_ssl_cert)
+            settings.SSL_CERT = resolved_cert or new_ssl_cert
+        if new_ssl_key:
+            resolved_key = settings._resolve_ssl_path(new_ssl_key)
+            settings.SSL_KEY = resolved_key or new_ssl_key
+
         flash("✅ Настройки обновлены и успешно сохранены!", "success")
         return redirect(url_for("settings_panel"))
 
+    has_ssl = bool(settings.SSL_CERT and settings.SSL_KEY and os.path.exists(settings.SSL_CERT) and os.path.exists(settings.SSL_KEY))
     current_settings = {
         "schedule_url": settings.SCHEDULE_URL,
         "plan_url": settings.PLAN_URL,
         "semester_start": settings.SEMESTER_START,
         "log_level": settings.LOG_LEVEL,
         "owner_id": settings.OWNER_ID,
+        "ssl_cert": settings.SSL_CERT or "",
+        "ssl_key": settings.SSL_KEY or "",
+        "use_ssl": has_ssl,
     }
 
     return render_template("settings.html", settings=current_settings)

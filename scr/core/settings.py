@@ -34,8 +34,27 @@ PANEL_URL = os.getenv("PANEL_URL", "")
 PANEL_PORT = int(os.getenv("PANEL_PORT", "19999"))
 
 # SSL
-SSL_CERT = os.getenv("SSL_CERT", "self_signed.crt")
-SSL_KEY = os.getenv("SSL_KEY", "self_signed.key")
+def _resolve_ssl_path(val: str) -> Optional[str]:
+    if not val:
+        return None
+    p = Path(val)
+    if p.is_absolute() and p.exists():
+        return str(p)
+    p_root = BASE_DIR / val
+    if p_root.exists():
+        return str(p_root)
+    p_ssl = BASE_DIR / "ssl" / val
+    if p_ssl.exists():
+        return str(p_ssl)
+    p_ssl_name = BASE_DIR / "ssl" / p.name
+    if p_ssl_name.exists():
+        return str(p_ssl_name)
+    return str(p_root)
+
+_raw_cert = os.getenv("SSL_CERT", "self_signed.crt")
+_raw_key = os.getenv("SSL_KEY", "self_signed.key")
+SSL_CERT = _resolve_ssl_path(_raw_cert)
+SSL_KEY = _resolve_ssl_path(_raw_key)
 
 _cached_public_ip: Optional[str] = None
 
