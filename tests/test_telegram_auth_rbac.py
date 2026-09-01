@@ -243,7 +243,7 @@ def test_rbac_owner_full_access(client):
     assert c.get("/control").status_code == 200
 
 
-# ================== ТЕСТЫ БОТ-КОМАНДЫ /web ==================
+# ================== ТЕСТЫ БОТ-КОМАНДЫ /web И /setpanel ==================
 
 @pytest.mark.asyncio
 async def test_bot_web_command_authorized(mock_settings):
@@ -252,9 +252,15 @@ async def test_bot_web_command_authorized(mock_settings):
 
     await web_auth_command(update, context)
     update.message.reply_text.assert_called()
+    call_kwargs = update.message.reply_text.call_args[1]
     reply_text = update.message.reply_text.call_args[0][0]
     assert "Авторизация в Веб-панели" in reply_text
     assert "одноразовый код" in reply_text
+    assert "/auth/telegram?token=" in reply_text
+    # Проверка инлайн кнопки быстрого входа
+    reply_markup = call_kwargs.get("reply_markup")
+    assert reply_markup is not None
+    assert "/auth/telegram?token=" in reply_markup.inline_keyboard[0][0].url
 
 
 @pytest.mark.asyncio
@@ -266,3 +272,23 @@ async def test_bot_web_command_unauthorized(mock_settings):
     update.message.reply_text.assert_called()
     reply_text = update.message.reply_text.call_args[0][0]
     assert "Ваш ID" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_bot_setpanel_command(mock_settings):
+    from scr.bot.handlers.admin import setpanel_command
+    import scr.core.settings as settings
+
+    user_id = mock_settings["owner_id"]
+    update, context, bot = create_mock_update(user_id, "/setpanel")
+    context.args = ["http://my-ddns.domain.ru:19999"]
+
+    await setpanel_command(update, context)
+    assert settings.PANEL_URL == "http://my-ddns.domain.ru:19999"
+    assert "успешно обновлен" in update.message.reply_text.call_args[0][0]
+
+    # Сброс на авто
+    context.args = ["auto"]
+    await setpanel_command(update, context)
+    assert settings.PANEL_URL == ""
+    assert "автоматическое определение" in update.message.reply_text.call_args[0][0]

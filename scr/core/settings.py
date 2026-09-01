@@ -30,10 +30,46 @@ except ValueError:
 FLASK_SECRET = os.getenv("FLASK_SECRET", "supersecretkey")
 PANEL_USER = os.getenv("PANEL_USER", "admin")
 PANEL_PASS = os.getenv("PANEL_PASS", "admin")
+PANEL_URL = os.getenv("PANEL_URL", "")
+PANEL_PORT = int(os.getenv("PANEL_PORT", "19999"))
 
 # SSL
 SSL_CERT = os.getenv("SSL_CERT", "self_signed.crt")
 SSL_KEY = os.getenv("SSL_KEY", "self_signed.key")
+
+_cached_public_ip: Optional[str] = None
+
+
+def get_public_ip() -> str:
+    """Автоматическое определение внешнего IP-адреса сервера"""
+    global _cached_public_ip
+    if _cached_public_ip:
+        return _cached_public_ip
+    try:
+        import httpx
+        proxy = PROXY_URL or None
+        with httpx.Client(proxy=proxy, timeout=3.0) as client:
+            resp = client.get("https://api.ipify.org")
+            if resp.is_success and resp.text.strip():
+                _cached_public_ip = resp.text.strip()
+                return _cached_public_ip
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+def get_panel_base_url() -> str:
+    """Возвращает базовый URL веб-панели (кастомный domain/DDNS или автоопределенный IP:порт)"""
+    global PANEL_URL
+    if PANEL_URL and PANEL_URL.strip():
+        url = PANEL_URL.strip().rstrip("/")
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = f"http://{url}"
+        return url
+
+    ip = get_public_ip()
+    proto = "https" if (SSL_CERT and os.path.exists(SSL_CERT) and SSL_KEY and os.path.exists(SSL_KEY)) else "http"
+    return f"{proto}://{ip}:{PANEL_PORT}"
 
 # 2FA
 TOTP_SECRET = os.getenv("TOTP_SECRET", "")

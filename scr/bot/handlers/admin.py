@@ -6,7 +6,8 @@ from telegram.ext import ContextTypes
 
 from scr.core.users import user_manager
 from scr.core.stats import stats_manager
-from scr.core.settings import OWNER_ID, LOG_FILE
+from scr.core.settings import OWNER_ID, LOG_FILE, get_panel_base_url
+import scr.core.settings as settings
 from scr.core.logger import logger
 from scr.parsers.schedule_parser import fetch_schedule, schedule_cache
 from scr.parsers.teacher_parser import fetch_teachers, teachers_cache
@@ -341,3 +342,44 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         os._exit(42)
 
     threading.Thread(target=trigger_exit, daemon=True).start()
+
+
+@require_auth
+@require_role("owner")
+async def setpanel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /setpanel для настройки домена/IP/DDNS веб-панели (только для Владельца)"""
+    uid = update.effective_user.id
+
+    if not context.args:
+        current_url = get_panel_base_url()
+        is_custom = bool(settings.PANEL_URL)
+        status_str = "настроен вручную" if is_custom else "определяется автоматически"
+        await update.message.reply_text(
+            f"🌐 *Текущий адрес веб-панели:* `{current_url}`\n"
+            f"📌 Режим: _{status_str}_\n\n"
+            "💡 Чтобы установить домен/DDNS/статический IP, используйте:\n"
+            "`/setpanel http://ваш-домен:19999`\n\n"
+            "Или сбросить на автоопределение IP:\n"
+            "`/setpanel auto`",
+            parse_mode="Markdown"
+        )
+        return
+
+    new_val = context.args[0].strip()
+    if new_val.lower() == "auto":
+        settings.PANEL_URL = ""
+        current_url = get_panel_base_url()
+        await update.message.reply_text(
+            f"✅ Сброшено на автоматическое определение внешнего IP.\n🌐 Текущий адрес: `{current_url}`",
+            parse_mode="Markdown"
+        )
+    else:
+        if not new_val.startswith("http://") and not new_val.startswith("https://"):
+            new_val = f"http://{new_val}"
+        settings.PANEL_URL = new_val.rstrip("/")
+        await update.message.reply_text(
+            f"✅ *Адрес веб-панели успешно обновлен!*\n"
+            f"🌐 Теперь ссылки `/web` будут вести на: `{settings.PANEL_URL}`",
+            parse_mode="Markdown"
+        )
+    logger.info(f"Владелец ({uid}) обновил адрес веб-панели: {settings.PANEL_URL or 'AUTO'}")

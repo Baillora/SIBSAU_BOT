@@ -157,6 +157,7 @@ def create_bot_app():
     app.add_handler(CommandHandler("unadm", admin.unadm_command))
     app.add_handler(CommandHandler("broadcast", admin.broadcast))
     app.add_handler(CommandHandler("restart", admin.restart))
+    app.add_handler(CommandHandler("setpanel", admin.setpanel_command))
 
     # --- Callback-хэндлеры ---
     app.add_handler(CallbackQueryHandler(schedule.day_handler, pattern=r"^week_[12]_.+"))
