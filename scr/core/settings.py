@@ -41,6 +41,14 @@ TOTP_SECRET = os.getenv("TOTP_SECRET", "")
 # Семестр
 SEMESTER_START = os.getenv("SEMESTER_START", "")
 
+# Часовой пояс бота (по умолчанию Красноярск Asia/Krasnoyarsk UTC+7)
+TIMEZONE_NAME = os.getenv("TIMEZONE", "Asia/Krasnoyarsk")
+try:
+    import zoneinfo
+    BOT_TIMEZONE = zoneinfo.ZoneInfo(TIMEZONE_NAME)
+except Exception:
+    BOT_TIMEZONE = datetime.timezone(datetime.timedelta(hours=7))
+
 # Файлы данных
 ALLOWED_USERS_FILE = BASE_DIR / "allowed_users.json"
 STATS_FILE = BASE_DIR / "stats.json"

@@ -9,7 +9,7 @@ from telegram.ext import (
     InlineQueryHandler,
     ContextTypes,
 )
-from scr.core.settings import TOKEN, OWNER_ID, PROXY_URL
+from scr.core.settings import TOKEN, OWNER_ID, PROXY_URL, BOT_TIMEZONE, TIMEZONE_NAME
 from scr.bot.handlers import start, schedule, teachers, admin, misc, inline, calendar_export, web_auth
 from scr.parsers.schedule_parser import fetch_schedule, get_current_week_and_day
 from scr.parsers.teacher_parser import fetch_teachers
@@ -91,11 +91,11 @@ async def preload_data(application):
 
     await setup_bot_commands(application)
 
-    # Настройка ежедневной утренней рассылки (07:30 по локальному времени)
+    # Настройка ежедневной утренней рассылки (07:30 по времени Красноярска)
     if application.job_queue:
-        digest_time = datetime.time(hour=7, minute=30)
+        digest_time = datetime.time(hour=7, minute=30, tzinfo=BOT_TIMEZONE)
         application.job_queue.run_daily(send_daily_digest, time=digest_time, name="daily_digest")
-        logger.info("✅ Утренняя рассылка расписания запланирована на 07:30")
+        logger.info(f"✅ Утренняя рассылка расписания запланирована на 07:30 ({TIMEZONE_NAME})")
 
 
 def create_bot_app():

@@ -12,6 +12,7 @@ from scr.core.settings import (
     LESSON_SCHEDULE,
     CACHE_EXPIRY,
     OWNER_ID,
+    BOT_TIMEZONE,
     get_semester_start_date,
 )
 from scr.core.logger import logger
@@ -202,9 +203,10 @@ async def fetch_schedule(application=None) -> Dict[str, Any]:
 
 
 def get_current_week_and_day(schedule: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Определяет текущую дату, день недели и четность недели (week_1 / week_2)"""
+    """Определяет текущую дату, день недели и четность недели (week_1 / week_2) в часовом поясе Красноярска"""
     try:
-        today = datetime.date.today()
+        now_local = datetime.datetime.now(BOT_TIMEZONE)
+        today = now_local.date()
         weekday_en = today.strftime("%A")
         day_name_ru = WEEKDAYS.get(weekday_en, weekday_en)
 
@@ -225,9 +227,10 @@ def get_current_week_and_day(schedule: Optional[Dict[str, Any]] = None) -> Tuple
 
 
 def get_tomorrow_week_and_day(schedule: Optional[Dict[str, Any]] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Определяет дату, день недели и четность недели для завтрашнего дня"""
+    """Определяет дату, день недели и четность недели для завтрашнего дня в часовом поясе Красноярска"""
     try:
-        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+        now_local = datetime.datetime.now(BOT_TIMEZONE)
+        tomorrow = now_local.date() + datetime.timedelta(days=1)
         weekday_en = tomorrow.strftime("%A")
         day_name_ru = WEEKDAYS.get(weekday_en, weekday_en)
 
@@ -253,7 +256,7 @@ def get_current_and_next_lesson(schedule: Dict[str, Any], current_week: str, day
     - next_lesson
     - minutes_until_next_start
     """
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(BOT_TIMEZONE)
     current_minutes = now.hour * 60 + now.minute
 
     today_lessons = schedule.get(current_week, {}).get(day_name_ru, [])

@@ -6,7 +6,7 @@ from scr.parsers.schedule_parser import (
     fetch_schedule,
     get_current_and_next_lesson,
 )
-from scr.core.settings import LESSON_SCHEDULE
+from scr.core.settings import LESSON_SCHEDULE, BOT_TIMEZONE
 from scr.core.users import user_manager
 from scr.core.logger import logger
 from scr.bot.handlers.utils import safe_edit_message, require_auth, render_progress_bar
@@ -41,7 +41,7 @@ async def build_start_payload(user_id: int, context: ContextTypes.DEFAULT_TYPE):
 
         # Расчет времени для прогресс-бара
         import datetime
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(BOT_TIMEZONE)
         cur_min = now.hour * 60 + now.minute
         progress_str = ""
         for s_min, e_min in LESSON_SCHEDULE:
