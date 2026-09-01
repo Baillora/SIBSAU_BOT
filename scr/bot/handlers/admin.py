@@ -367,19 +367,21 @@ async def setpanel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     new_val = context.args[0].strip()
     if new_val.lower() == "auto":
-        settings.PANEL_URL = ""
+        settings.set_panel_url("")
         current_url = get_panel_base_url()
         await update.message.reply_text(
-            f"✅ Сброшено на автоматическое определение внешнего IP.\n🌐 Текущий адрес: `{current_url}`",
+            f"✅ Сброшено на автоматическое определение внешнего IP.\n🌐 Текущий адрес: `{current_url}`\n💾 _Настройка сохранена в .env_",
             parse_mode="Markdown"
         )
     else:
         if not new_val.startswith("http://") and not new_val.startswith("https://"):
             new_val = f"http://{new_val}"
-        settings.PANEL_URL = new_val.rstrip("/")
+        cleaned_url = new_val.rstrip("/")
+        settings.set_panel_url(cleaned_url)
         await update.message.reply_text(
-            f"✅ *Адрес веб-панели успешно обновлен!*\n"
-            f"🌐 Теперь ссылки `/web` будут вести на: `{settings.PANEL_URL}`",
+            f"✅ *Адрес веб-панели успешно обновлен и сохранен!*\n"
+            f"🌐 Теперь ссылки `/web` будут вести на: `{settings.PANEL_URL}`\n"
+            f"💾 _Настройка сохранена в .env и не сбросится после перезапуска._",
             parse_mode="Markdown"
         )
     logger.info(f"Владелец ({uid}) обновил адрес веб-панели: {settings.PANEL_URL or 'AUTO'}")

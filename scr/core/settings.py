@@ -90,6 +90,50 @@ def get_panel_base_url() -> str:
     proto = "https" if (SSL_CERT and os.path.exists(SSL_CERT) and SSL_KEY and os.path.exists(SSL_KEY)) else "http"
     return f"{proto}://{ip}:{PANEL_PORT}"
 
+
+def update_env_var(key: str, value: str) -> bool:
+    """Безопасное сохранение/обновление переменной в файле .env с сохранением комментариев и порядка строк"""
+    try:
+        lines = []
+        key_found = False
+        key_pattern = re.compile(rf"^\s*{re.escape(key)}\s*=", re.IGNORECASE)
+
+        if ENV_PATH.exists():
+            with open(ENV_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        new_lines = []
+        for line in lines:
+            if key_pattern.match(line):
+                new_lines.append(f"{key}={value}\n")
+                key_found = True
+            else:
+                new_lines.append(line)
+
+        if not key_found:
+            if new_lines and not new_lines[-1].endswith("\n"):
+                new_lines[-1] += "\n"
+            new_lines.append(f"{key}={value}\n")
+
+        with open(ENV_PATH, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+
+        return True
+    except Exception as e:
+        try:
+            from scr.core.logger import logger
+            logger.error(f"Ошибка при записи в .env ({key}={value}): {e}")
+        except Exception:
+            pass
+        return False
+
+
+def set_panel_url(new_url: str) -> None:
+    """Установка и сохранение адреса веб-панели (в памяти и в .env файле)"""
+    global PANEL_URL
+    PANEL_URL = new_url.strip()
+    update_env_var("PANEL_URL", PANEL_URL)
+
 # 2FA
 TOTP_SECRET = os.getenv("TOTP_SECRET", "")
 

@@ -805,14 +805,28 @@ def logs_clear():
 @app.route("/settings_panel", methods=["GET", "POST"])
 @role_required("owner")
 def settings_panel():
-    """Просмотр и безопасное редактирование настроек (только Owner)"""
+    """Просмотр и безопасное редактирование всех параметров .env (только Owner)"""
     if request.method == "POST":
+        new_token = (request.form.get("token") or "").strip()
+        new_owner_id_str = (request.form.get("owner_id") or "").strip()
+        new_timezone = (request.form.get("timezone") or "Asia/Krasnoyarsk").strip()
+
         new_sched = (request.form.get("schedule_url") or "").strip()
         new_plan = (request.form.get("plan_url") or "").strip()
         new_sem_start = (request.form.get("semester_start") or "").strip()
-        new_log_level = (request.form.get("log_level") or "INFO").strip().upper()
+
+        new_panel_user = (request.form.get("panel_user") or "admin").strip()
+        new_panel_pass = (request.form.get("panel_pass") or "").strip()
+        new_flask_secret = (request.form.get("flask_secret") or "").strip()
+        new_panel_port_str = (request.form.get("panel_port") or "19999").strip()
+        new_panel_url = (request.form.get("panel_url") or "").strip()
+
         new_ssl_cert = (request.form.get("ssl_cert") or "").strip()
         new_ssl_key = (request.form.get("ssl_key") or "").strip()
+        new_totp_secret = (request.form.get("totp_secret") or "").strip()
+
+        new_proxy_url = (request.form.get("proxy_url") or "").strip()
+        new_log_level = (request.form.get("log_level") or "INFO").strip().upper()
 
         if new_sched and not is_safe_url(new_sched):
             flash("❌ Недопустимый URL для расписания (разрешены только http/https)", "danger")
@@ -822,33 +836,99 @@ def settings_panel():
             flash("❌ Недопустимый URL для учебного плана (разрешены только http/https)", "danger")
             return redirect(url_for("settings_panel"))
 
+        if new_panel_url and not is_safe_url(new_panel_url):
+            flash("❌ Недопустимый URL для веб-панели (разрешены только http/https)", "danger")
+            return redirect(url_for("settings_panel"))
+
         if new_log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
             new_log_level = "INFO"
 
-        settings.SCHEDULE_URL = new_sched
-        settings.PLAN_URL = new_plan
-        settings.SEMESTER_START = new_sem_start
-        settings.LOG_LEVEL = new_log_level
+        # 1. Telegram
+        if new_token:
+            settings.TOKEN = new_token
+            settings.update_env_var("TOKEN", new_token)
 
+        if new_owner_id_str.isdigit():
+            settings.OWNER_ID = int(new_owner_id_str)
+            settings.update_env_var("OWNER_ID", new_owner_id_str)
+
+        settings.TIMEZONE_NAME = new_timezone
+        settings.update_env_var("TIMEZONE", new_timezone)
+
+        # 2. Расписание
+        settings.SCHEDULE_URL = new_sched
+        settings.update_env_var("SCHEDULE_URL", new_sched)
+
+        settings.PLAN_URL = new_plan
+        settings.update_env_var("PLAN_URL", new_plan)
+
+        settings.SEMESTER_START = new_sem_start
+        settings.update_env_var("SEMESTER_START", new_sem_start)
+
+        # 3. Веб-панель
+        settings.PANEL_USER = new_panel_user
+        settings.update_env_var("PANEL_USER", new_panel_user)
+
+        if new_panel_pass:
+            settings.PANEL_PASS = new_panel_pass
+            settings.update_env_var("PANEL_PASS", new_panel_pass)
+
+        if new_flask_secret:
+            settings.FLASK_SECRET = new_flask_secret
+            app.secret_key = new_flask_secret
+            settings.update_env_var("FLASK_SECRET", new_flask_secret)
+
+        if new_panel_port_str.isdigit():
+            port_val = int(new_panel_port_str)
+            if 1 <= port_val <= 65535:
+                settings.PANEL_PORT = port_val
+                settings.update_env_var("PANEL_PORT", new_panel_port_str)
+
+        settings.set_panel_url(new_panel_url)
+
+        # 4. SSL & 2FA
         if new_ssl_cert:
             resolved_cert = settings._resolve_ssl_path(new_ssl_cert)
             settings.SSL_CERT = resolved_cert or new_ssl_cert
+            settings.update_env_var("SSL_CERT", new_ssl_cert)
+
         if new_ssl_key:
             resolved_key = settings._resolve_ssl_path(new_ssl_key)
             settings.SSL_KEY = resolved_key or new_ssl_key
+            settings.update_env_var("SSL_KEY", new_ssl_key)
 
-        flash("✅ Настройки обновлены и успешно сохранены!", "success")
+        if new_totp_secret:
+            settings.TOTP_SECRET = new_totp_secret
+            settings.update_env_var("TOTP_SECRET", new_totp_secret)
+
+        # 5. Сеть и логирование
+        settings.PROXY_URL = new_proxy_url
+        settings.update_env_var("PROXY_URL", new_proxy_url)
+
+        settings.LOG_LEVEL = new_log_level
+        settings.update_env_var("LOG_LEVEL", new_log_level)
+
+        flash("✅ Настройки обновлены и успешно сохранены в .env!", "success")
         return redirect(url_for("settings_panel"))
 
     has_ssl = bool(settings.SSL_CERT and settings.SSL_KEY and os.path.exists(settings.SSL_CERT) and os.path.exists(settings.SSL_KEY))
     current_settings = {
-        "schedule_url": settings.SCHEDULE_URL,
-        "plan_url": settings.PLAN_URL,
-        "semester_start": settings.SEMESTER_START,
-        "log_level": settings.LOG_LEVEL,
-        "owner_id": settings.OWNER_ID,
+        "token": settings.TOKEN or "",
+        "owner_id": settings.OWNER_ID or "",
+        "timezone": getattr(settings, "TIMEZONE_NAME", "Asia/Krasnoyarsk"),
+        "schedule_url": settings.SCHEDULE_URL or "",
+        "plan_url": settings.PLAN_URL or "",
+        "semester_start": settings.SEMESTER_START or "",
+        "panel_user": settings.PANEL_USER or "admin",
+        "panel_pass": settings.PANEL_PASS or "",
+        "flask_secret": settings.FLASK_SECRET or "",
+        "panel_port": settings.PANEL_PORT or 19999,
+        "panel_url": settings.PANEL_URL or "",
         "ssl_cert": settings.SSL_CERT or "",
         "ssl_key": settings.SSL_KEY or "",
+        "totp_secret": getattr(settings, "TOTP_SECRET", "") or "",
+        "proxy_url": getattr(settings, "PROXY_URL", "") or "",
+        "log_level": settings.LOG_LEVEL or "INFO",
         "use_ssl": has_ssl,
     }
 

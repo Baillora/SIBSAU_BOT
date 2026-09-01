@@ -1,107 +1,249 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-lg-8">
+  <div class="col-lg-9">
     <div class="d-flex justify-content-between align-items-center mb-4">
       <div>
-        <h2 class="fw-bold mb-1"><i class="fa-solid fa-sliders text-primary me-2"></i>Настройки системы</h2>
-        <p class="text-muted mb-0">Управление параметрами работы бота, расписания и безопасности</p>
+        <h2 class="fw-bold mb-1"><i class="fa-solid fa-sliders text-primary me-2"></i>Настройки системы (.env)</h2>
+        <p class="text-muted mb-0">Управление всеми системными параметрами бота, веб-панели и безопасности</p>
       </div>
-    </div>
-
-    <div class="card border-0 shadow-sm mb-4">
-      <div class="card-header bg-body-tertiary fw-bold py-3">
-        <i class="fa-solid fa-gear me-2 text-primary"></i>Параметры бота и сервера
-      </div>
-      <div class="card-body p-4">
-        <form method="POST" action="{{ url_for('settings_panel') }}">
+      <div class="d-flex gap-2">
+        <form method="post" action="{{ url_for('action_reload') }}" class="d-inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-          <!-- SCHEDULE_URL -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">
-              <i class="fa-solid fa-link me-1 text-primary"></i> Ссылка на расписание (SCHEDULE_URL)
-            </label>
-            <input type="url" name="schedule_url" class="form-control" value="{{ settings.schedule_url }}" placeholder="https://timetable.pallada.sibsau.ru/timetable/group/..." required>
-            <div class="form-text">Ссылка на страницу расписания группы в АСУ Паллада.</div>
-          </div>
-
-          <!-- PLAN_URL -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">
-              <i class="fa-solid fa-file-pdf me-1 text-primary"></i> Ссылка на учебный план (PLAN_URL)
-            </label>
-            <input type="url" name="plan_url" class="form-control" value="{{ settings.plan_url }}" placeholder="https://cloud.sibsau.ru/...">
-            <div class="form-text">Ссылка на учебный план группы (необязательно).</div>
-          </div>
-
-          <!-- SEMESTER_START -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">
-              <i class="fa-solid fa-calendar-day me-1 text-primary"></i> Дата начала семестра (SEMESTER_START)
-            </label>
-            <input type="date" name="semester_start" class="form-control" value="{{ settings.semester_start }}">
-            <div class="form-text">Оставьте пустым для автоматического расчета (1 сентября осенью / 1 февраля весной).</div>
-          </div>
-
-          <!-- LOG_LEVEL -->
-          <div class="mb-4">
-            <label class="form-label fw-semibold">
-              <i class="fa-solid fa-bug me-1 text-primary"></i> Уровень логирования (LOG_LEVEL)
-            </label>
-            <select name="log_level" class="form-select">
-              <option value="INFO" {% if settings.log_level == 'INFO' %}selected{% endif %}>INFO (Стандартный)</option>
-              <option value="DEBUG" {% if settings.log_level == 'DEBUG' %}selected{% endif %}>DEBUG (Максимально подробный)</option>
-              <option value="WARNING" {% if settings.log_level == 'WARNING' %}selected{% endif %}>WARNING (Только предупреждения и ошибки)</option>
-              <option value="ERROR" {% if settings.log_level == 'ERROR' %}selected{% endif %}>ERROR (Только критические ошибки)</option>
-            </select>
-          </div>
-
-          <!-- SSL CERTIFICATE & KEY CONFIGURATION -->
-          <div class="card border border-secondary-subtle p-3 mb-4 bg-body-tertiary rounded-3">
-            <div class="d-flex align-items-center justify-content-between mb-3">
-              <span class="fw-bold"><i class="fa-solid fa-shield-halved me-1 text-primary"></i> SSL / HTTPS Сертификаты</span>
-              {% if settings.use_ssl %}
-                <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
-                  <i class="fa-solid fa-lock me-1"></i> HTTPS Активен
-                </span>
-              {% else %}
-                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1">
-                  <i class="fa-solid fa-lock-open me-1"></i> HTTP (Не защищено)
-                </span>
-              {% endif %}
-            </div>
-
-            <div class="mb-3">
-              <label class="form-label small fw-semibold">Путь к SSL сертификату (.crt / .pem)</label>
-              <input type="text" name="ssl_cert" class="form-control form-control-sm font-monospace" value="{{ settings.ssl_cert }}" placeholder="ssl/self_signed.crt или /etc/ssl/certs/server.crt">
-              <div class="form-text small">Относительный путь от корня проекта (например <code>ssl/self_signed.crt</code>) или абсолютный путь.</div>
-            </div>
-
-            <div class="mb-2">
-              <label class="form-label small fw-semibold">Путь к приватному ключу (.key)</label>
-              <input type="text" name="ssl_key" class="form-control form-control-sm font-monospace" value="{{ settings.ssl_key }}" placeholder="ssl/self_signed.key или /etc/ssl/private/server.key">
-              <div class="form-text small">После сохранения путей перезапустите бота (<code>sudo systemctl restart sibsau_bot</code>).</div>
-            </div>
-          </div>
-
-          <!-- OWNER_ID -->
-          <div class="mb-4">
-            <label class="form-label fw-semibold">
-              <i class="fa-solid fa-crown me-1 text-warning"></i> ID владельца (OWNER_ID)
-            </label>
-            <input type="text" class="form-control bg-body-secondary" value="{{ settings.owner_id }}" disabled readonly>
-            <div class="form-text">ID владельца задаётся через файл .env.</div>
-          </div>
-
-          <div class="d-flex justify-content-end">
-            <button type="submit" class="btn btn-primary px-4 py-2 fw-semibold shadow-sm">
-              <i class="fa-solid fa-floppy-disk me-1"></i> Сохранить настройки
-            </button>
-          </div>
+          <button type="submit" class="btn btn-outline-warning btn-sm">
+            <i class="fa-solid fa-rotate me-1"></i> Сбросить кэш
+          </button>
         </form>
       </div>
     </div>
+
+    <form method="POST" action="{{ url_for('settings_panel') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <!-- 1. Telegram Bot Settings -->
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-body-tertiary fw-bold py-3">
+          <i class="fa-brands fa-telegram text-primary me-2"></i>Параметры Telegram-бота
+        </div>
+        <div class="card-body p-4">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Токен Telegram-бота (TOKEN)</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fa-solid fa-key"></i></span>
+              <input type="password" name="token" id="botTokenInput" class="form-control font-monospace" value="{{ settings.token }}" placeholder="123456789:ABCdefGhIjkLmNoPqRs..." required>
+              <button class="btn btn-outline-secondary" type="button" onclick="toggleSecret('botTokenInput', this)">
+                <i class="fa-solid fa-eye"></i>
+              </button>
+            </div>
+            <div class="form-text">Токен бота от @BotFather. При изменении токена требуется перезапуск.</div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">ID владельца (OWNER_ID)</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="fa-solid fa-crown text-warning"></i></span>
+                <input type="number" name="owner_id" class="form-control font-monospace" value="{{ settings.owner_id }}" placeholder="1651557527" required>
+              </div>
+              <div class="form-text">Цифровой Telegram ID главного администратора.</div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Часовой пояс (TIMEZONE)</label>
+              <select name="timezone" class="form-select">
+                <option value="Asia/Krasnoyarsk" {% if settings.timezone == 'Asia/Krasnoyarsk' %}selected{% endif %}>Красноярск (UTC+7, Asia/Krasnoyarsk)</option>
+                <option value="Europe/Moscow" {% if settings.timezone == 'Europe/Moscow' %}selected{% endif %}>Москва (UTC+3, Europe/Moscow)</option>
+                <option value="Asia/Novosibirsk" {% if settings.timezone == 'Asia/Novosibirsk' %}selected{% endif %}>Новосибирск (UTC+7, Asia/Novosibirsk)</option>
+                <option value="Asia/Irkutsk" {% if settings.timezone == 'Asia/Irkutsk' %}selected{% endif %}>Иркутск (UTC+8, Asia/Irkutsk)</option>
+                <option value="UTC" {% if settings.timezone == 'UTC' %}selected{% endif %}>UTC (+00:00)</option>
+              </select>
+              <div class="form-text">Для точного расчета расписания и времени утренней рассылки (07:30).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Расписание и Учеба -->
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-body-tertiary fw-bold py-3">
+          <i class="fa-solid fa-graduation-cap text-primary me-2"></i>Параметры расписания
+        </div>
+        <div class="card-body p-4">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Ссылка на расписание группы (SCHEDULE_URL)</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fa-solid fa-link"></i></span>
+              <input type="url" name="schedule_url" class="form-control" value="{{ settings.schedule_url }}" placeholder="https://timetable.pallada.sibsau.ru/timetable/group/..." required>
+            </div>
+            <div class="form-text">Прямая ссылка на страницу группы в АСУ Паллада СибГУ.</div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-7">
+              <label class="form-label fw-semibold">Ссылка на учебный план (PLAN_URL)</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="fa-solid fa-file-pdf"></i></span>
+                <input type="url" name="plan_url" class="form-control" value="{{ settings.plan_url }}" placeholder="https://docs.google.com/...">
+              </div>
+              <div class="form-text">Ссылка на учебный план группы (необязательно).</div>
+            </div>
+
+            <div class="col-md-5">
+              <label class="form-label fw-semibold">Дата начала семестра (SEMESTER_START)</label>
+              <input type="date" name="semester_start" class="form-control" value="{{ settings.semester_start }}">
+              <div class="form-text">Оставьте пустым для авто-расчета (1 сент / 1 фев).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Веб-панель управления (Flask) -->
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-body-tertiary fw-bold py-3">
+          <i class="fa-solid fa-globe text-primary me-2"></i>Веб-панель управления
+        </div>
+        <div class="card-body p-4">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Логин мастера (PANEL_USER)</label>
+              <input type="text" name="panel_user" class="form-control" value="{{ settings.panel_user }}" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Пароль мастера (PANEL_PASS)</label>
+              <div class="input-group">
+                <input type="password" name="panel_pass" id="panelPassInput" class="form-control" value="{{ settings.panel_pass }}" required>
+                <button class="btn btn-outline-secondary" type="button" onclick="toggleSecret('panelPassInput', this)">
+                  <i class="fa-solid fa-eye"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Секретный ключ сессий (FLASK_SECRET)</label>
+            <div class="input-group">
+              <input type="password" name="flask_secret" id="flaskSecretInput" class="form-control font-monospace" value="{{ settings.flask_secret }}" required>
+              <button class="btn btn-outline-secondary" type="button" onclick="toggleSecret('flaskSecretInput', this)">
+                <i class="fa-solid fa-eye"></i>
+              </button>
+            </div>
+            <div class="form-text">Используется для криптографической защиты cookies сессий и CSRF токенов.</div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Порт панели (PANEL_PORT)</label>
+              <input type="number" name="panel_port" class="form-control" value="{{ settings.panel_port }}" min="1" max="65535" required>
+              <div class="form-text">По умолчанию: <code>19999</code>.</div>
+            </div>
+
+            <div class="col-md-8">
+              <label class="form-label fw-semibold">Внешний адрес / Домен / DDNS (PANEL_URL)</label>
+              <input type="text" name="panel_url" class="form-control font-monospace" value="{{ settings.panel_url }}" placeholder="http://109.195.67.206:19999 или https://panel.domain.ru">
+              <div class="form-text">Используется для генерации ссылок авторизации в команде <code>/web</code>. Оставьте пустым для авто-IP.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. Безопасность и SSL/HTTPS -->
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-body-tertiary fw-bold py-3 d-flex justify-content-between align-items-center">
+          <span><i class="fa-solid fa-shield-halved text-primary me-2"></i>SSL / HTTPS Шифрование и 2FA</span>
+          {% if settings.use_ssl %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
+              <i class="fa-solid fa-lock me-1"></i> HTTPS Активен
+            </span>
+          {% else %}
+            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1">
+              <i class="fa-solid fa-lock-open me-1"></i> HTTP (Не защищено)
+            </span>
+          {% endif %}
+        </div>
+        <div class="card-body p-4">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Путь к SSL сертификату (SSL_CERT)</label>
+              <input type="text" name="ssl_cert" class="form-control form-control-sm font-monospace" value="{{ settings.ssl_cert }}" placeholder="ssl/self_signed.crt">
+              <div class="form-text small">Путь к <code>.crt</code> / <code>.pem</code> файлу (от корня проекта или абсолютный).</div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Путь к приватному ключу (SSL_KEY)</label>
+              <input type="text" name="ssl_key" class="form-control form-control-sm font-monospace" value="{{ settings.ssl_key }}" placeholder="ssl/self_signed.key">
+              <div class="form-text small">Путь к <code>.key</code> файлу закрытого ключа.</div>
+            </div>
+          </div>
+
+          <div>
+            <label class="form-label small fw-semibold">TOTP 2FA Секрет (TOTP_SECRET)</label>
+            <div class="input-group input-group-sm">
+              <input type="password" name="totp_secret" id="totpSecretInput" class="form-control font-monospace" value="{{ settings.totp_secret }}" placeholder="Оставьте пустым для авто-генерации">
+              <button class="btn btn-outline-secondary" type="button" onclick="toggleSecret('totpSecretInput', this)">
+                <i class="fa-solid fa-eye"></i>
+              </button>
+            </div>
+            <div class="form-text small">Base32 секретный ключ для генератора двухфакторных кодов Google Authenticator.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Сеть и логирование -->
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-body-tertiary fw-bold py-3">
+          <i class="fa-solid fa-network-wired text-primary me-2"></i>Сеть и логирование
+        </div>
+        <div class="card-body p-4">
+          <div class="row g-3">
+            <div class="col-md-7">
+              <label class="form-label fw-semibold">Прокси для Telegram API (PROXY_URL)</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="fa-solid fa-server"></i></span>
+                <input type="text" name="proxy_url" class="form-control font-monospace" value="{{ settings.proxy_url }}" placeholder="http://127.0.0.1:10808 или socks5://...">
+              </div>
+              <div class="form-text">HTTP / SOCKS5 / VLESS прокси для отправки запросов бота.</div>
+            </div>
+
+            <div class="col-md-5">
+              <label class="form-label fw-semibold">Уровень логирования (LOG_LEVEL)</label>
+              <select name="log_level" class="form-select">
+                <option value="INFO" {% if settings.log_level == 'INFO' %}selected{% endif %}>INFO (Стандартный)</option>
+                <option value="DEBUG" {% if settings.log_level == 'DEBUG' %}selected{% endif %}>DEBUG (Максимально подробный)</option>
+                <option value="WARNING" {% if settings.log_level == 'WARNING' %}selected{% endif %}>WARNING (Только предупреждения и ошибки)</option>
+                <option value="ERROR" {% if settings.log_level == 'ERROR' %}selected{% endif %}>ERROR (Только критические ошибки)</option>
+              </select>
+              <div class="form-text">Уровень детализации записей в файле <code>warning.log</code>.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Кнопка сохранения -->
+      <div class="d-flex justify-content-between align-items-center p-3 card border-0 shadow-sm bg-body-tertiary mb-5">
+        <div class="small text-muted">
+          <i class="fa-solid fa-floppy-disk me-1 text-primary"></i> Все изменения будут мгновенно перезаписаны в файл <code>.env</code>.
+        </div>
+        <button type="submit" class="btn btn-primary px-4 py-2 fw-semibold shadow">
+          <i class="fa-solid fa-floppy-disk me-1"></i> Сохранить настройки в .env
+        </button>
+      </div>
+    </form>
   </div>
 </div>
+
+<script>
+  function toggleSecret(inputId, btn) {
+    const input = document.getElementById(inputId);
+    const icon = btn.querySelector('i');
+    if (input.type === 'password') {
+      input.type = 'text';
+      icon.classList.remove('fa-eye');
+      icon.classList.add('fa-eye-slash');
+    } else {
+      input.type = 'password';
+      icon.classList.remove('fa-eye-slash');
+      icon.classList.add('fa-eye');
+    }
+  }
+</script>
 {% endblock %}

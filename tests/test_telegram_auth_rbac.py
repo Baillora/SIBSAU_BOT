@@ -292,3 +292,22 @@ async def test_bot_setpanel_command(mock_settings):
     await setpanel_command(update, context)
     assert settings.PANEL_URL == ""
     assert "автоматическое определение" in update.message.reply_text.call_args[0][0]
+
+
+def test_update_env_var(tmp_path, monkeypatch):
+    import scr.core.settings as settings
+    test_env = tmp_path / ".env"
+    test_env.write_text("# Test env\nPANEL_URL=http://old.url\nLOG_LEVEL=INFO\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "ENV_PATH", test_env)
+
+    # 1. Обновление существующего ключа
+    assert settings.update_env_var("PANEL_URL", "https://109.195.67.206:19999") is True
+    content = test_env.read_text(encoding="utf-8")
+    assert "PANEL_URL=https://109.195.67.206:19999" in content
+    assert "LOG_LEVEL=INFO" in content
+    assert "# Test env" in content
+
+    # 2. Добавление нового ключа
+    assert settings.update_env_var("SSL_CERT", "ssl/self_signed.crt") is True
+    content2 = test_env.read_text(encoding="utf-8")
+    assert "SSL_CERT=ssl/self_signed.crt" in content2
