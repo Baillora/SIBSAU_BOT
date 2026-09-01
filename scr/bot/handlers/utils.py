@@ -201,16 +201,20 @@ def require_auth(func: Callable) -> Callable:
                 await update.callback_query.answer("У вас нет доступа к боту.", show_alert=True)
                 return
             elif update.message:
+                owner_contact = "администратору"
                 try:
                     owner_user = await context.bot.get_chat(OWNER_ID) if OWNER_ID else None
-                    owner_name = f"@{owner_user.username}" if (owner_user and owner_user.username) else "администратору"
+                    if owner_user and owner_user.username:
+                        owner_contact = f"@{owner_user.username}"
+                    elif OWNER_ID:
+                        owner_contact = f"ID: `{OWNER_ID}`"
                 except Exception:
-                    owner_name = "администратору"
+                    owner_contact = "администратору"
 
                 await update.message.reply_text(
                     f"Ваш ID: `{uid}`\n\n"
-                    f"Для использования бота сообщите ваш ID {owner_name}.\n\n"
-                    "Разработчик @m3di4",
+                    f"Для использования бота сообщите ваш ID администратору ({owner_contact}).\n\n"
+                    f"Администратор {owner_contact}",
                     parse_mode="Markdown"
                 )
                 return
