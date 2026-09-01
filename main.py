@@ -22,7 +22,7 @@ def print_startup_messages():
     
                 Improvements can be made to the code. If you're getting an error, visit my tg.
                                     Github: https://github.com/Baillora  
-                                       Telegram: https://t.me/lssued  
+                                       Telegram: https://t.me/m3di4  
     """
     print(Colorate.Vertical(Colors.red_to_yellow, Center.XCenter(ascii_art)))
 
