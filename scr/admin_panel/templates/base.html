@@ -2,7 +2,7 @@
 <html lang="ru" data-bs-theme="light">
   <head>
     <meta charset="utf-8">
-    <title>Админ-панель SIBSAU_BOT</title>
+    <title>Панель управления SIBSAU_BOT</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -27,6 +27,11 @@
       .nav-link.active {
         font-weight: 600;
       }
+      .badge-role {
+        font-size: 0.85rem;
+        padding: 0.4em 0.7em;
+        border-radius: 20px;
+      }
       [data-bs-theme="dark"] .card {
         box-shadow: 0 4px 12px rgba(0,0,0,0.25);
       }
@@ -34,10 +39,10 @@
   </head>
   <body>
     <!-- navbar -->
-    {% if request.endpoint != "login" and request.endpoint != "twofa" %}
+    {% if request.endpoint != "login" and request.endpoint != "twofa" and session.get("logged_in") %}
     <nav class="navbar navbar-expand-lg bg-body-tertiary sticky-top shadow-sm">
       <div class="container">
-        <a class="navbar-brand fw-bold text-primary" href="{{ url_for('index') }}">
+        <a class="navbar-brand fw-bold text-primary" href="{{ url_for('schedule_view' if current_role == 'user' else ('users_page' if current_role == 'mod' else 'index')) }}">
           <i class="fa-solid fa-robot me-1"></i> SIBSAU_BOT
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
@@ -45,43 +50,72 @@
         </button>
         <div class="collapse navbar-collapse" id="navMenu">
           <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+            <!-- Статистика (Admin & Owner) -->
+            {% if current_role in ('owner', 'admin') %}
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'index' %}active text-primary{% endif %}" href="{{ url_for('index') }}">
                 <i class="fa-solid fa-chart-pie me-1"></i> Статистика
               </a>
             </li>
+            {% endif %}
+
+            <!-- Расписание (Доступно всем) -->
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'schedule_view' %}active text-primary{% endif %}" href="{{ url_for('schedule_view') }}">
                 <i class="fa-solid fa-calendar-days me-1"></i> Расписание
               </a>
             </li>
+
+            <!-- Пользователи (Mod, Admin, Owner) -->
+            {% if current_role in ('owner', 'admin', 'mod') %}
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'users_page' %}active text-primary{% endif %}" href="{{ url_for('users_page') }}">
                 <i class="fa-solid fa-users me-1"></i> Пользователи
               </a>
             </li>
+            {% endif %}
+
+            <!-- Логи (Admin & Owner) -->
+            {% if current_role in ('owner', 'admin') %}
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'logs_page' %}active text-primary{% endif %}" href="{{ url_for('logs_page') }}">
                 <i class="fa-solid fa-file-lines me-1"></i> Логи
               </a>
             </li>
+            {% endif %}
+
+            <!-- Настройки (Только Owner) -->
+            {% if current_role == 'owner' %}
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'settings_panel' %}active text-primary{% endif %}" href="{{ url_for('settings_panel') }}">
                 <i class="fa-solid fa-sliders me-1"></i> Настройки
               </a>
             </li>
+            {% endif %}
+
+            <!-- Управление (Admin & Owner) -->
+            {% if current_role in ('owner', 'admin') %}
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'control_page' %}active text-primary{% endif %}" href="{{ url_for('control_page') }}">
                 <i class="fa-solid fa-bolt me-1"></i> Управление
               </a>
             </li>
+            {% endif %}
           </ul>
+
           <div class="d-flex align-items-center gap-2">
+            <!-- Бейдж текущего пользователя и роли -->
+            <div class="d-none d-md-flex align-items-center me-2">
+              <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle badge-role">
+                {{ current_role_label }} ({{ current_username }})
+              </span>
+            </div>
+
             <!-- Переключатель темы -->
             <button class="btn btn-outline-secondary btn-sm" id="themeToggle" type="button" title="Переключить тему">
               <i class="fa-solid fa-moon" id="themeIcon"></i>
             </button>
-            <a class="btn btn-outline-danger btn-sm" href="{{ url_for('logout') }}">
+            <a class="btn btn-outline-danger btn-sm" href="{{ url_for('logout') }}" title="Выйти из панели">
               <i class="fa-solid fa-right-from-bracket me-1"></i> Выход
             </a>
           </div>
@@ -102,35 +136,45 @@
           {% endfor %}
         {% endif %}
       {% endwith %}
+
       {% block content %}{% endblock %}
     </div>
 
-    <!-- Bootstrap JS -->
+    <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Скрипт тёмной темы -->
     <script>
-      // Тема Dark / Light
-      const htmlEl = document.documentElement;
-      const themeToggleBtn = document.getElementById('themeToggle');
-      const themeIcon = document.getElementById('themeIcon');
+      (function() {
+        const themeToggleBtn = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        const htmlElement = document.documentElement;
 
-      function setTheme(theme) {
-        htmlEl.setAttribute('data-bs-theme', theme);
-        localStorage.setItem('theme', theme);
-        if (themeIcon) {
-          themeIcon.className = theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        setTheme(savedTheme);
+
+        if (themeToggleBtn) {
+          themeToggleBtn.addEventListener('click', function() {
+            const currentTheme = htmlElement.getAttribute('data-bs-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            setTheme(newTheme);
+          });
         }
-      }
 
-      const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-      setTheme(savedTheme);
-
-      if (themeToggleBtn) {
-        themeToggleBtn.addEventListener('click', () => {
-          const current = htmlEl.getAttribute('data-bs-theme');
-          setTheme(current === 'dark' ? 'light' : 'dark');
-        });
-      }
+        function setTheme(theme) {
+          htmlElement.setAttribute('data-bs-theme', theme);
+          localStorage.setItem('theme', theme);
+          if (themeIcon) {
+            if (theme === 'dark') {
+              themeIcon.classList.remove('fa-moon');
+              themeIcon.classList.add('fa-sun');
+            } else {
+              themeIcon.classList.remove('fa-sun');
+              themeIcon.classList.add('fa-moon');
+            }
+          }
+        }
+      })();
     </script>
-    {% block scripts %}{% endblock %}
   </body>
 </html>

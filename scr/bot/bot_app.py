@@ -10,7 +10,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from scr.core.settings import TOKEN, OWNER_ID, PROXY_URL
-from scr.bot.handlers import start, schedule, teachers, admin, misc, inline, calendar_export
+from scr.bot.handlers import start, schedule, teachers, admin, misc, inline, calendar_export, web_auth
 from scr.parsers.schedule_parser import fetch_schedule, get_current_week_and_day
 from scr.parsers.teacher_parser import fetch_teachers
 from scr.core.users import user_manager
@@ -65,6 +65,7 @@ async def setup_bot_commands(application) -> None:
             BotCommand("note", "Добавить заметку к предмету"),
             BotCommand("notes", "Список ваших заметок и дедлайнов"),
             BotCommand("room", "Справочник корпусов и аудиторий"),
+            BotCommand("web", "Получить код для входа в веб-панель"),
             BotCommand("plan", "Учебный план"),
             BotCommand("map", "Карта корпусов"),
         ]
@@ -138,6 +139,9 @@ def create_bot_app():
     app.add_handler(CommandHandler("room", misc.room_command))
     app.add_handler(CommandHandler("plan", misc.plan_command))
     app.add_handler(CommandHandler("map", misc.map_command))
+    app.add_handler(CommandHandler("web", web_auth.web_auth_command))
+    app.add_handler(CommandHandler("login", web_auth.web_auth_command))
+    app.add_handler(CommandHandler("panel", web_auth.web_auth_command))
 
     # --- Админка ---
     app.add_handler(CommandHandler("adduser", admin.adduser))

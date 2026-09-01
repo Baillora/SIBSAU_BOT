@@ -1,27 +1,81 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="card shadow-lg p-4" style="max-width:400px; margin:auto;">
-    <h4 class="text-center mb-4"><i class="fa-solid fa-lock"></i> Вход в панель</h4>
-    <form method="post">
-      {{ form.hidden_tag() }}
-      <div class="mb-3">
-        {{ form.username.label }}
-        {{ form.username(class="form-control") }}
-      </div>
-      <div class="mb-3">
-        {{ form.password.label }}
-        {{ form.password(class="form-control") }}
-      </div>
-      {{ form.submit(class="btn btn-primary w-100") }}
-    </form>
-    <div class="pt-3">
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-          {% for category, message in messages %}
-            <div class="alert alert-{{ category }} mt-2">{{ message }}</div>
-          {% endfor %}
-        {% endif %}
-      {% endwith %}
+<div class="card shadow-lg p-4" style="max-width: 440px; margin: 40px auto;">
+  <div class="text-center mb-3">
+    <div class="avatar-icon mb-2 text-primary">
+      <i class="fa-solid fa-shield-halved fa-3x"></i>
+    </div>
+    <h4 class="fw-bold">Вход в панель</h4>
+    <p class="text-muted small">Выберите удобный способ входа в панель</p>
+  </div>
+
+  <!-- Вкладки способов авторизации -->
+  <ul class="nav nav-pills nav-fill mb-4" id="loginTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active fw-semibold" id="tg-tab" data-bs-toggle="tab" data-bs-target="#tg-login" type="button" role="tab">
+        <i class="fa-brands fa-telegram me-1"></i> Telegram
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link fw-semibold" id="pass-tab" data-bs-toggle="tab" data-bs-target="#pass-login" type="button" role="tab">
+        <i class="fa-solid fa-key me-1"></i> Пароль
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="loginTabsContent">
+    <!-- Вход через Telegram (По коду / ID) -->
+    <div class="tab-pane fade show active" id="tg-login" role="tabpanel">
+      <form action="{{ url_for('auth_telegram_code') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Ваш Telegram ID</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="fa-solid fa-id-card"></i></span>
+            <input type="text" name="telegram_id" class="form-control" placeholder="Например: 1651557527" required autofocus>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Одноразовый 6-значный код</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="fa-solid fa-lock"></i></span>
+            <input type="text" name="code" class="form-control text-center fw-bold fs-5 tracking-wide" placeholder="• • • • • •" maxlength="6" required>
+          </div>
+        </div>
+
+        <div class="alert alert-info py-2 small mb-3">
+          <i class="fa-solid fa-circle-info me-1"></i> Отправьте команду <code>/web</code> нашему боту в Telegram, чтобы получить код для входа в 1 клик.
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold shadow-sm">
+          <i class="fa-brands fa-telegram me-1"></i> Войти через Telegram
+        </button>
+      </form>
+    </div>
+
+    <!-- Традиционный вход по паролю (Master Admin) -->
+    <div class="tab-pane fade" id="pass-login" role="tabpanel">
+      <form method="post">
+        {{ form.hidden_tag() }}
+        <div class="mb-3">
+          {{ form.username.label(class="form-label small fw-semibold") }}
+          <div class="input-group">
+            <span class="input-group-text"><i class="fa-solid fa-user"></i></span>
+            {{ form.username(class="form-control", placeholder="Имя пользователя") }}
+          </div>
+        </div>
+        <div class="mb-3">
+          {{ form.password.label(class="form-label small fw-semibold") }}
+          <div class="input-group">
+            <span class="input-group-text"><i class="fa-solid fa-lock"></i></span>
+            {{ form.password(class="form-control", placeholder="Пароль") }}
+          </div>
+        </div>
+        {{ form.submit(class="btn btn-outline-primary w-100 py-2 fw-semibold", value="Войти как Администратор") }}
+      </form>
     </div>
   </div>
+</div>
 {% endblock %}

@@ -15,6 +15,7 @@
     </div>
   </div>
 
+  {% if current_role == 'owner' %}
   <div class="card shadow-sm mb-4">
     <div class="card-body">
       <form method="post" action="{{ url_for('action_reset2fa') }}">
@@ -23,6 +24,7 @@
       </form>
     </div>
   </div>
+  {% endif %}
 
   <div class="card shadow-sm">
     <div class="card-body">

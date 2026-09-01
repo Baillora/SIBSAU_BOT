@@ -20,9 +20,13 @@
         </div>
         <div class="col-md-4">
           <select name="role" class="form-select">
-            <option value="user">Пользователь (user)</option>
+            <option value="user">Студент (user)</option>
+            {% if current_role in ('owner', 'admin') %}
             <option value="mod">Модератор (mod)</option>
+            {% endif %}
+            {% if current_role == 'owner' %}
             <option value="admin">Администратор (admin)</option>
+            {% endif %}
           </select>
         </div>
         <div class="col-md-3">
@@ -81,7 +85,8 @@
               <td style="min-width: 180px;">
                 {% if data.role == 'owner' %}
                   <span class="badge bg-warning text-dark px-3 py-2 fw-bold"><i class="fa-solid fa-crown me-1"></i>Owner</span>
-                {% else %}
+                {% elif current_role == 'owner' %}
+                  <!-- Владелец может менять любые роли -->
                   <form class="d-flex gap-1" method="post" action="{{ url_for('users_setrole') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="user_id" value="{{ uid }}">
@@ -92,25 +97,59 @@
                     </select>
                     <button class="btn btn-outline-secondary btn-sm" title="Сохранить роль"><i class="fa-solid fa-floppy-disk"></i></button>
                   </form>
+                {% elif current_role == 'admin' and data.role in ('user', 'mod') %}
+                  <!-- Админ может менять роли между user и mod -->
+                  <form class="d-flex gap-1" method="post" action="{{ url_for('users_setrole') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="user_id" value="{{ uid }}">
+                    <select name="role" class="form-select form-select-sm">
+                      <option value="user"  {% if data.role=='user' %}selected{% endif %}>user</option>
+                      <option value="mod"   {% if data.role=='mod' %}selected{% endif %}>mod</option>
+                    </select>
+                    <button class="btn btn-outline-secondary btn-sm" title="Сохранить роль"><i class="fa-solid fa-floppy-disk"></i></button>
+                  </form>
+                {% else %}
+                  <!-- Модератор или просмотр чужого админа -->
+                  {% if data.role == 'admin' %}
+                    <span class="badge bg-danger-subtle text-danger border px-2 py-1"><i class="fa-solid fa-shield me-1"></i>Admin</span>
+                  {% elif data.role == 'mod' %}
+                    <span class="badge bg-info-subtle text-info border px-2 py-1"><i class="fa-solid fa-user-shield me-1"></i>Mod</span>
+                  {% else %}
+                    <span class="badge bg-secondary-subtle text-secondary border px-2 py-1"><i class="fa-solid fa-user me-1"></i>User</span>
+                  {% endif %}
                 {% endif %}
               </td>
               <td class="text-end pe-4">
                 <div class="d-flex justify-content-end gap-1">
-                  <!-- Кнопка отправки сообщения -->
+                  <!-- Кнопка отправки сообщения (Admin & Owner) -->
+                  {% if current_role in ('owner', 'admin') %}
                   <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#msgModal{{ uid }}" title="Отправить сообщение в Telegram">
                     <i class="fa-solid fa-paper-plane"></i>
                   </button>
+                  {% endif %}
 
                   <!-- Удаление -->
                   {% if data.role != 'owner' %}
+                    {% set can_delete = false %}
+                    {% if current_role == 'owner' %}
+                      {% set can_delete = true %}
+                    {% elif current_role == 'admin' and data.role in ('user', 'mod') %}
+                      {% set can_delete = true %}
+                    {% elif current_role == 'mod' and data.role == 'user' %}
+                      {% set can_delete = true %}
+                    {% endif %}
+
+                    {% if can_delete %}
                     <form method="post" action="{{ url_for('users_delete', user_id=uid) }}" onsubmit="return confirm('Удалить пользователя {{ uid }}?')" class="d-inline">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <button class="btn btn-outline-danger btn-sm" title="Удалить"><i class="fa-solid fa-trash"></i></button>
                     </form>
+                    {% endif %}
                   {% endif %}
                 </div>
 
-                <!-- Модальное окно сообщения -->
+                <!-- Модальное окно сообщения (Admin & Owner) -->
+                {% if current_role in ('owner', 'admin') %}
                 <div class="modal fade text-start" id="msgModal{{ uid }}" tabindex="-1" aria-hidden="true">
                   <div class="modal-dialog">
                     <div class="modal-content">
@@ -134,6 +173,7 @@
                     </div>
                   </div>
                 </div>
+                {% endif %}
               </td>
             </tr>
             {% endfor %}

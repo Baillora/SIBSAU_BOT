@@ -9,12 +9,14 @@
       <a href="{{ url_for('logs_download') }}" class="btn btn-outline-secondary">
         <i class="fa-solid fa-download me-1"></i> Скачать лог
       </a>
+      {% if current_role == 'owner' %}
       <form method="POST" action="{{ url_for('logs_clear') }}" onsubmit="return confirm('Очистить весь лог-файл?')" class="d-inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-outline-danger">
           <i class="fa-solid fa-trash-can me-1"></i> Очистить
         </button>
       </form>
+      {% endif %}
     </div>
   </div>
 

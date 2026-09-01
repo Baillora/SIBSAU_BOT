@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import hmac
+import hashlib
 import pyotp
 import qrcode
 import io
@@ -10,7 +11,7 @@ import urllib.parse
 from pathlib import Path
 from functools import wraps
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from flask import Flask, render_template, redirect, url_for, request, flash, session, send_file, jsonify, abort
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -21,6 +22,8 @@ import scr.core.settings as settings
 from scr.core.logger import logger
 from scr.core.users import user_manager
 from scr.core.stats import stats_manager
+from scr.core.notes import notes_manager
+from scr.core.auth_tokens import auth_token_manager
 from scr.parsers.schedule_parser import fetch_schedule, schedule_cache
 from scr.parsers.teacher_parser import fetch_teachers, teachers_cache
 from .forms import LoginForm, TwoFAForm
@@ -37,7 +40,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=use_ssl,
     SESSION_COOKIE_SAMESITE="Strict",
-    PERMANENT_SESSION_LIFETIME=timedelta(minutes=30)
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=60)
 )
 
 # CSRF защита
@@ -95,13 +98,88 @@ def set_2fa_enabled(enabled: bool = True) -> None:
         logger.error(f"Ошибка сохранения 2FA статуса: {e}")
 
 
+def get_user_role() -> str:
+    """Получить актуальную роль текущего авторизованного пользователя"""
+    if session.get("is_master_admin"):
+        return "owner"
+    tg_id = session.get("telegram_id")
+    if tg_id:
+        try:
+            return user_manager.get_role(int(tg_id))
+        except Exception:
+            return "user"
+    # Для традиционного входа по логину/паролю администратора роль по умолчанию - owner
+    return session.get("role", "owner")
+
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get("logged_in"):
             return redirect(url_for("login"))
+
+        # Проверка актуальности прав для вошедших через Telegram
+        tg_id = session.get("telegram_id")
+        if tg_id:
+            try:
+                uid = int(tg_id)
+                if not user_manager.is_allowed(uid):
+                    session.clear()
+                    flash("⛔️ Доступ отозван. Ваш аккаунт больше не разрешен в системе.", "danger")
+                    return redirect(url_for("login"))
+                session["role"] = user_manager.get_role(uid)
+            except Exception:
+                session.clear()
+                return redirect(url_for("login"))
+
         return f(*args, **kwargs)
     return decorated_function
+
+
+def role_required(*allowed_roles: str):
+    """Декоратор для строгой проверки роли пользователя в веб-панели (RBAC)"""
+    def decorator(f):
+        @wraps(f)
+        @login_required
+        def decorated_function(*args, **kwargs):
+            current_role = get_user_role()
+            if current_role not in allowed_roles:
+                flash(f"⛔️ У вас нет прав для доступа к этому разделу (ваша роль: {current_role}).", "warning")
+                if current_role == "user":
+                    return redirect(url_for("schedule_view"))
+                elif current_role == "mod":
+                    return redirect(url_for("users_page"))
+                return redirect(url_for("index"))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+@app.context_processor
+def inject_user_context():
+    """Передача данных текущего пользователя во все шаблоны"""
+    if session.get("logged_in"):
+        role = get_user_role()
+        role_labels = {
+            "owner": "👑 Владелец",
+            "admin": "🛡️ Администратор",
+            "mod": "👮 Модератор",
+            "user": "🎓 Студент"
+        }
+        return {
+            "current_role": role,
+            "current_role_label": role_labels.get(role, "Пользователь"),
+            "current_username": session.get("username", "Пользователь"),
+            "current_tg_id": session.get("telegram_id"),
+            "is_master_admin": session.get("is_master_admin", False),
+        }
+    return {
+        "current_role": None,
+        "current_role_label": None,
+        "current_username": None,
+        "current_tg_id": None,
+        "is_master_admin": False,
+    }
 
 
 def is_safe_url(url: str) -> bool:
@@ -199,10 +277,11 @@ def set_security_headers(response):
     response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self' https:; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://telegram.org; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
         "font-src 'self' https://cdnjs.cloudflare.com data:; "
         "img-src 'self' data: https:; "
+        "frame-src https://oauth.telegram.org; "
         "frame-ancestors 'none';"
     )
     if use_ssl:
@@ -243,6 +322,12 @@ def internal_error_handler(e):
 @app.route("/login", methods=["GET", "POST"])
 @limiter.limit("5 per minute")
 def login():
+    if session.get("logged_in"):
+        role = get_user_role()
+        if role == "user":
+            return redirect(url_for("schedule_view"))
+        return redirect(url_for("index"))
+
     form = LoginForm()
     if form.validate_on_submit():
         username = form.username.data.strip()
@@ -262,11 +347,136 @@ def login():
                 username=username,
                 ip=ip,
                 host=host,
-                reason="invalid credentials"
+                reason="invalid master credentials"
             )
             flash("Неверный логин или пароль", "danger")
 
     return render_template("login.html", form=form)
+
+
+@app.route("/auth/telegram", methods=["GET"])
+@limiter.limit("10 per minute")
+def auth_telegram():
+    """Вход по одноразовой ссылке (magic link) из Telegram бота"""
+    token = request.args.get("token", "").strip()
+    ip = get_client_ip()
+    host = get_request_host()
+
+    if not token:
+        flash("Токен авторизации отсутствует.", "danger")
+        return redirect(url_for("login"))
+
+    data = auth_token_manager.verify_and_consume_token(token)
+    if not data:
+        send_owner_login_alert(
+            is_success=False,
+            username="Telegram-User",
+            ip=ip,
+            host=host,
+            reason="invalid or expired telegram auth token"
+        )
+        flash("❌ Ссылка для входа недействительна или срок её действия истек. Запросите новую команду /web в боте.", "danger")
+        return redirect(url_for("login"))
+
+    uid = int(data["user_id"])
+    if not user_manager.is_allowed(uid):
+        send_owner_login_alert(
+            is_success=False,
+            username=f"ID:{uid}",
+            ip=ip,
+            host=host,
+            reason="unauthorized telegram user"
+        )
+        flash("⛔️ Доступ запрещен. Ваш аккаунт не найден в списке разрешенных пользователей.", "danger")
+        return redirect(url_for("login"))
+
+    role = user_manager.get_role(uid)
+    username = data.get("username") or str(uid)
+
+    session.clear()
+    session["logged_in"] = True
+    session["telegram_id"] = uid
+    session["username"] = username
+    session["role"] = role
+    session["is_master_admin"] = (role == "owner")
+    session.permanent = True
+
+    send_owner_login_alert(
+        is_success=True,
+        username=f"TG: {username} ({uid}) [{role}]",
+        ip=ip,
+        host=host
+    )
+    flash(f"✅ Вы успешно вошли через Telegram как {username} ({role})!", "success")
+
+    if role == "user":
+        return redirect(url_for("schedule_view"))
+    elif role == "mod":
+        return redirect(url_for("users_page"))
+    return redirect(url_for("index"))
+
+
+@app.route("/auth/telegram_code", methods=["POST"])
+@limiter.limit("5 per minute")
+def auth_telegram_code():
+    """Вход по 6-значному коду и Telegram ID"""
+    tg_id_str = (request.form.get("telegram_id") or "").strip()
+    code = (request.form.get("code") or "").strip()
+    ip = get_client_ip()
+    host = get_request_host()
+
+    if not tg_id_str.isdigit() or not code:
+        flash("Пожалуйста, введите ваш Telegram ID и 6-значный код.", "danger")
+        return redirect(url_for("login"))
+
+    uid = int(tg_id_str)
+    data = auth_token_manager.verify_and_consume_code(uid, code)
+    if not data:
+        send_owner_login_alert(
+            is_success=False,
+            username=f"ID:{uid}",
+            ip=ip,
+            host=host,
+            reason="invalid telegram OTP code"
+        )
+        flash("❌ Неверный код подтверждения или Telegram ID. Отправьте /web боту для получения свежего кода.", "danger")
+        return redirect(url_for("login"))
+
+    if not user_manager.is_allowed(uid):
+        send_owner_login_alert(
+            is_success=False,
+            username=f"ID:{uid}",
+            ip=ip,
+            host=host,
+            reason="unauthorized telegram user"
+        )
+        flash("⛔️ Доступ запрещен. Ваш аккаунт не найден в списке разрешенных.", "danger")
+        return redirect(url_for("login"))
+
+    role = user_manager.get_role(uid)
+    username = data.get("username") or str(uid)
+
+    session.clear()
+    session["logged_in"] = True
+    session["telegram_id"] = uid
+    session["username"] = username
+    session["role"] = role
+    session["is_master_admin"] = (role == "owner")
+    session.permanent = True
+
+    send_owner_login_alert(
+        is_success=True,
+        username=f"TG: {username} ({uid}) [{role}]",
+        ip=ip,
+        host=host
+    )
+    flash(f"✅ Добро пожаловать, {username}!", "success")
+
+    if role == "user":
+        return redirect(url_for("schedule_view"))
+    elif role == "mod":
+        return redirect(url_for("users_page"))
+    return redirect(url_for("index"))
 
 
 @app.route("/2fa", methods=["GET", "POST"], endpoint="twofa")
@@ -286,6 +496,8 @@ def twofa():
         if totp.verify(code):
             session.pop("pre_2fa", None)
             session["logged_in"] = True
+            session["is_master_admin"] = True
+            session["role"] = "owner"
             session.permanent = True
             set_2fa_enabled(True)
 
@@ -330,14 +542,21 @@ def qrcode_route():
 @app.route("/logout")
 def logout():
     session.clear()
+    flash("Вы вышли из системы.", "info")
     return redirect(url_for("login"))
 
 
-# ================== СТАТИСТИКА И ПАНЕЛЬ ==================
+# ================== СТАТИСТИКА И ПАНЕЛЬ (ТОЛЬКО ADMIN И OWNER) ==================
 
 @app.route("/")
 @login_required
 def index():
+    role = get_user_role()
+    if role == "user":
+        return redirect(url_for("schedule_view"))
+    elif role == "mod":
+        return redirect(url_for("users_page"))
+
     stats_data = stats_manager.get_snapshot()
     totals = {
         "unique_users_count": stats_data["unique_users_count"],
@@ -358,12 +577,12 @@ def index():
     )
 
 
-# ================== РАСПИСАНИЕ (ПРЕДПРОСМОТР) ==================
+# ================== РАСПИСАНИЕ (ДОСТУПНО ВСЕМ РОЛЯМ) ==================
 
 @app.route("/schedule", methods=["GET"])
 @login_required
 def schedule_view():
-    """Просмотр актуального кэша расписания в веб-панели"""
+    """Просмотр актуального расписания в веб-панели (доступно всем: студент, модер, админ, владелец)"""
     schedule_data = dict(schedule_cache)
     if not schedule_data:
         try:
@@ -378,10 +597,10 @@ def schedule_view():
     )
 
 
-# ================== ПОЛЬЗОВАТЕЛИ ==================
+# ================== ПОЛЬЗОВАТЕЛИ (MOD, ADMIN, OWNER) ==================
 
 @app.route("/users", methods=["GET"])
-@login_required
+@role_required("owner", "admin", "mod")
 def users_page():
     users_dict = user_manager.get_all_users()
 
@@ -395,53 +614,74 @@ def users_page():
 
 
 @app.route("/users/add", methods=["POST"])
-@login_required
+@role_required("owner", "admin", "mod")
 def users_add():
+    current_role = get_user_role()
     uid_str = (request.form.get("user_id") or "").strip()
-    role = (request.form.get("role") or "user").strip()
+    requested_role = (request.form.get("role") or "user").strip()
 
     if not uid_str.isdigit() or len(uid_str) > 16:
-        flash("ID пользователя должен быть положительным числом (до 16 цифр)", "danger")
-        return redirect(url_for("users_page"))
-
-    if role not in ("user", "mod", "admin"):
-        flash("Недопустимая роль пользователя", "danger")
+        flash("ID пользователя должен быть числом (до 16 цифр)", "danger")
         return redirect(url_for("users_page"))
 
     uid = int(uid_str)
-    if role == "owner":
-        flash("❌ Нельзя назначить нового владельца через панель!", "danger")
-        role = "user"
 
-    if user_manager.add_user(uid, role=role, username="Веб-панель"):
-        flash(f"Пользователь {uid} добавлен с ролью {role}", "success")
+    # Ограничения по ролям в зависимости от ранга создателя
+    if current_role == "mod":
+        # Модератор может добавлять только обычных пользователей (user)
+        role_to_set = "user"
+    elif current_role == "admin":
+        # Администратор может создавать только user или mod
+        if requested_role not in ("user", "mod"):
+            flash("Администратор может добавлять пользователей только с ролями 'Студент' или 'Модератор'.", "warning")
+            role_to_set = "user"
+        else:
+            role_to_set = requested_role
     else:
-        flash("Не удалось добавить пользователя", "warning")
+        # Владелец может назначать admin, mod, user
+        if requested_role in ("user", "mod", "admin"):
+            role_to_set = requested_role
+        else:
+            role_to_set = "user"
+
+    if user_manager.add_user(uid, role=role_to_set, username="Веб-панель"):
+        flash(f"✅ Пользователь {uid} успешно добавлен с ролью {role_to_set}", "success")
+    else:
+        flash("Пользователь уже существует или не может быть добавлен", "warning")
 
     return redirect(url_for("users_page"))
 
 
 @app.route("/users/setrole", methods=["POST"])
-@login_required
+@role_required("owner", "admin")
 def users_setrole():
+    """Смена роли пользователя (только Admin и Owner)"""
+    current_role = get_user_role()
     uid_str = (request.form.get("user_id") or "").strip()
-    role = (request.form.get("role") or "user").strip()
+    new_role = (request.form.get("role") or "user").strip()
 
     if not uid_str.isdigit() or len(uid_str) > 16:
         flash("Некорректный ID пользователя", "danger")
         return redirect(url_for("users_page"))
 
-    if role not in ("user", "mod", "admin"):
-        flash("Недопустимая роль", "danger")
-        return redirect(url_for("users_page"))
-
     uid = int(uid_str)
-    if uid == settings.OWNER_ID or role == "owner":
+    if uid == settings.OWNER_ID or new_role == "owner":
         flash("❌ Нельзя менять роль владельца!", "danger")
         return redirect(url_for("users_page"))
 
-    if user_manager.set_role(uid, role):
-        flash(f"Роль пользователя {uid} изменена на {role}", "info")
+    target_current_role = user_manager.get_role(uid)
+
+    # Администратор не может менять роли других администраторов или назначать новых администраторов
+    if current_role == "admin":
+        if target_current_role in ("admin", "owner"):
+            flash("❌ У вас нет прав для изменения роли администратора.", "danger")
+            return redirect(url_for("users_page"))
+        if new_role not in ("user", "mod"):
+            flash("❌ Администратор может назначать только роли 'Студент' и 'Модератор'.", "danger")
+            return redirect(url_for("users_page"))
+
+    if user_manager.set_role(uid, new_role):
+        flash(f"✅ Роль пользователя {uid} изменена на {new_role}", "info")
     else:
         flash("Пользователь не найден", "danger")
 
@@ -449,8 +689,9 @@ def users_setrole():
 
 
 @app.route("/users/delete/<user_id>", methods=["POST"])
-@login_required
+@role_required("owner", "admin", "mod")
 def users_delete(user_id: str):
+    current_role = get_user_role()
     if not user_id.isdigit():
         flash("Некорректный ID", "danger")
         return redirect(url_for("users_page"))
@@ -458,6 +699,19 @@ def users_delete(user_id: str):
     uid = int(user_id)
     if uid == settings.OWNER_ID:
         flash("❌ Нельзя удалить владельца!", "danger")
+        return redirect(url_for("users_page"))
+
+    target_role = user_manager.get_role(uid)
+
+    # Проверка рангов при удалении:
+    # Модератор может удалять только 'user'
+    if current_role == "mod" and target_role != "user":
+        flash("❌ Модератор может удалять только обычных пользователей (Студентов).", "danger")
+        return redirect(url_for("users_page"))
+
+    # Администратор может удалять 'user' и 'mod', но не 'admin'/'owner'
+    if current_role == "admin" and target_role in ("admin", "owner"):
+        flash("❌ Администратор не может удалять других администраторов.", "danger")
         return redirect(url_for("users_page"))
 
     if user_manager.remove_user(uid):
@@ -469,9 +723,9 @@ def users_delete(user_id: str):
 
 
 @app.route("/users/message/<user_id>", methods=["POST"])
-@login_required
+@role_required("owner", "admin")
 def send_user_message(user_id: str):
-    """Отправка прямого сообщения пользователю в Telegram"""
+    """Отправка прямого сообщения пользователю в Telegram (только Admin и Owner)"""
     if not user_id.isdigit():
         flash("Некорректный ID", "danger")
         return redirect(url_for("users_page"))
@@ -503,10 +757,10 @@ def send_user_message(user_id: str):
     return redirect(url_for("users_page"))
 
 
-# ================== ЛОГИ ==================
+# ================== ЛОГИ (ADMIN И OWNER) ==================
 
 @app.route("/logs")
-@login_required
+@role_required("owner", "admin")
 def logs_page():
     data = tail_log(settings.LOG_FILE, 1000)
     if request.args.get("ajax"):
@@ -515,7 +769,7 @@ def logs_page():
 
 
 @app.route("/logs/download")
-@login_required
+@role_required("owner", "admin")
 def logs_download():
     """Скачивание файла логов"""
     p = Path(settings.LOG_FILE)
@@ -526,9 +780,9 @@ def logs_download():
 
 
 @app.route("/logs/clear", methods=["POST"])
-@login_required
+@role_required("owner")
 def logs_clear():
-    """Очистка файла логов"""
+    """Очистка файла логов (только Owner)"""
     try:
         p = Path(settings.LOG_FILE)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -540,12 +794,12 @@ def logs_clear():
     return redirect(url_for("logs_page"))
 
 
-# ================== НАСТРОЙКИ (SETTINGS PANEL) ==================
+# ================== НАСТРОЙКИ (ТОЛЬКО OWNER) ==================
 
 @app.route("/settings_panel", methods=["GET", "POST"])
-@login_required
+@role_required("owner")
 def settings_panel():
-    """Просмотр и безопасное редактирование настроек"""
+    """Просмотр и безопасное редактирование настроек (только Owner)"""
     if request.method == "POST":
         new_sched = (request.form.get("schedule_url") or "").strip()
         new_plan = (request.form.get("plan_url") or "").strip()
@@ -582,25 +836,27 @@ def settings_panel():
     return render_template("settings.html", settings=current_settings)
 
 
-# ================== УПРАВЛЕНИЕ ==================
+# ================== УПРАВЛЕНИЕ (ADMIN И OWNER) ==================
 
 @app.route("/control", methods=["GET"])
-@login_required
+@role_required("owner", "admin")
 def control_page():
     return render_template("control.html")
 
 
 @app.route("/control/reset2fa", methods=["POST"])
-@login_required
+@role_required("owner")
 def action_reset2fa():
+    """Сброс 2FA (только Owner)"""
     set_2fa_enabled(False)
     flash("🔑 2FA сброшено. При следующем входе снова отобразится QR-код.", "warning")
     return redirect(url_for("control_page"))
 
 
 @app.route("/control/reload", methods=["POST"])
-@login_required
+@role_required("owner", "admin", "mod")
 def action_reload():
+    """Обновление кэша расписания (Mod, Admin, Owner)"""
     try:
         schedule_cache.clear()
         asyncio.run(fetch_schedule(None))
@@ -609,12 +865,13 @@ def action_reload():
     except Exception as e:
         logger.error(f"Не удалось обновить расписание: {e}")
         flash(f"❌ Ошибка обновления: {e}", "danger")
-    return redirect(url_for("control_page"))
+    return redirect(url_for("control_page" if get_user_role() in ("owner", "admin") else "users_page"))
 
 
 @app.route("/control/fullreload", methods=["POST"])
-@login_required
+@role_required("owner", "admin")
 def action_fullreload():
+    """Полная перезагрузка кэша расписания и преподавателей (Admin, Owner)"""
     try:
         schedule_cache.clear()
         teachers_cache.clear()
@@ -629,8 +886,9 @@ def action_fullreload():
 
 
 @app.route("/control/broadcast", methods=["POST"])
-@login_required
+@role_required("owner", "admin")
 def action_broadcast():
+    """Общая рассылка сообщений (Admin, Owner)"""
     text = (request.form.get("message") or "").strip()
     if not text or len(text) > 2000:
         flash("Введите корректный текст рассылки!", "danger")
