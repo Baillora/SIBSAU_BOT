@@ -210,7 +210,7 @@ def require_auth(func: Callable) -> Callable:
                 await update.message.reply_text(
                     f"Ваш ID: `{uid}`\n\n"
                     f"Для использования бота сообщите ваш ID {owner_name}.\n\n"
-                    "Разработчик @lssued",
+                    "Разработчик @m3di4",
                     parse_mode="Markdown"
                 )
                 return

@@ -86,7 +86,7 @@ async def build_start_payload(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     elif not current_lesson:
         welcome_message += "🔚 *Сегодня больше пар нет.*\n\n"
 
-    welcome_message += "💻 Разработчик @lssued | 🤖 [GitHub](https://github.com/Baillora/SIBSAU_BOT)"
+    welcome_message += "💻 Разработчик @m3di4 | 🤖 [GitHub](https://github.com/Baillora/SIBSAU_BOT)"
 
     keyboard = [
         [

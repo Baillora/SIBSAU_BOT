@@ -104,7 +104,7 @@ async def listusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not users_data:
         message_lines.append("Список разрешённых пользователей пуст.")
 
-    full_text = "\n".join(message_lines) + "\n\nРазработчик @lssued"
+    full_text = "\n".join(message_lines) + "\n\nРазработчик @m3di4"
     chunks = split_message_markdown(full_text)
     for chunk in chunks:
         await update.message.reply_text(chunk, parse_mode="Markdown")
