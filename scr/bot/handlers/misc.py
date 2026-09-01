@@ -19,64 +19,66 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     role = user_manager.get_role(uid)
 
     public_commands = [
+        "🤖 *Основные команды:*",
         "/start - Главное меню и статус текущей пары",
         "/help - Справка по всем командам",
+        "/web - Вход в веб-панель (1-клик ссылка и одноразовый код)",
     ]
 
     user_commands = [
+        "\n📚 *Функции для студентов:*",
         "/search <запрос> - Поиск по предметам, кабинетам и преподавателям",
         "/subgroup [1|2|all] - Выбрать свою подгруппу (1 / 2)",
         "/export - Скачать расписание в календарь (.ics)",
-        "/notifications - Вкл/выкл утренние напоминания",
-        "/note <предмет> : <текст> - Добавить заметку к предмету",
+        "/notifications - Вкл/выкл утренние напоминания (07:30)",
+        "/note <предмет> : <текст> - Добавить заметку/дедлайн к предмету",
         "/notes - Список ваших заметок и дедлайнов",
-        "/delnote <id> - Удалить заметку",
+        "/delnote <id> - Удалить заметку по номеру",
         "/room <номер/корпус> - Справочник аудиторий и корпусов",
         "/plan - Показать учебный план",
-        "/map - Показать карту корпусов"
+        "/map - Показать интерактивную карту корпусов"
     ]
 
     mod_admin_commands = [
-        "/adduser <user_id> - Добавить пользователя",
+        "\n👮 *Для модераторов:*",
+        "/adduser <user_id> - Добавить пользователя (Студента)",
         "/removeuser <user_id> - Удалить пользователя",
         "/listusers - Показать список пользователей",
-        "/reload - Перезагрузить кэш расписания",
-        "/fullreload - Полная перезагрузка (расписание + преподаватели)"
+        "/reload - Перезагрузить кэш расписания"
     ]
 
     admin_commands = [
+        "\n🛡️ *Для администраторов:*",
+        "/fullreload - Полная перезагрузка (расписание + преподаватели)",
         "/showlog [число] - Показать последние записи логов",
-        "/stats - Показать статистику",
+        "/stats - Показать подробную статистику бота",
         "/mod <user_id> - Назначить модератора",
-        "/unmod <user_id> - Снять модератора",
-        "/broadcast <текст> - Рассылка объявления"
+        "/unmod <user_id> - Снять с роли модератора",
+        "/broadcast <текст> - Отправить рассылку всем пользователям"
     ]
 
     owner_commands = [
+        "\n👑 *Для владельца:*",
         "/adm <user_id> - Назначить администратора",
-        "/unadm <user_id> - Снять администратора",
+        "/unadm <user_id> - Снять с роли администратора",
+        "/setpanel [url|auto] - Настроить домен/IP веб-панели",
         "/restart - Перезапустить бота"
     ]
 
     message_lines = []
     message_lines.extend(public_commands)
-
-    message_lines.append("\n-- 📚 Для студентов --")
     message_lines.extend(user_commands)
 
     if role in ["mod", "admin", "owner"]:
-        message_lines.append("\n-- 🛡 Для модераторов/админов --")
         message_lines.extend(mod_admin_commands)
 
     if role in ["admin", "owner"]:
-        message_lines.append("\n-- ⚙️ Для администраторов --")
         message_lines.extend(admin_commands)
 
     if role == "owner":
-        message_lines.append("\n-- 👑 Для владельца --")
         message_lines.extend(owner_commands)
 
-    await update.message.reply_text("\n".join(message_lines))
+    await update.message.reply_text("\n".join(message_lines), parse_mode="Markdown")
     logger.info(f"✅ {username} ({uid}) вызвал /help.")
 
 

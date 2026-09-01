@@ -19,7 +19,10 @@ async def test_help_authorized(mock_settings):
     update, context, bot = create_mock_update(owner_id, "/help")
     await help_command(update, context)
     update.message.reply_text.assert_called()
-    assert "/adduser" in update.message.reply_text.call_args[0][0]
+    reply = update.message.reply_text.call_args[0][0]
+    assert "/adduser" in reply
+    assert "/web" in reply
+    assert "/setpanel" in reply
 
 
 @pytest.mark.asyncio
