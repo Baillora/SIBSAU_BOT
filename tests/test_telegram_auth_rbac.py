@@ -123,6 +123,25 @@ def test_auth_telegram_code_unauthorized_user(client):
     assert "Доступ запрещен" in resp.get_data(as_text=True)
 
 
+def test_remember_me_checkbox(client):
+    c, mgr = client
+    from scr.admin_panel.app import auth_token_manager
+    auth_token_manager._rate_limits.clear()
+
+    # 1. Без галочки Запомнить меня -> session.permanent = False
+    _, code1, _ = auth_token_manager.create_auth_token(111, "student1", "user")
+    c.post("/auth/telegram_code", data={"telegram_id": "111", "code": code1}, follow_redirects=True)
+    with c.session_transaction() as sess:
+        assert sess.permanent is False
+
+    # 2. С галочкой Запомнить меня -> session.permanent = True
+    auth_token_manager._rate_limits.clear()
+    _, code2, _ = auth_token_manager.create_auth_token(222, "mod1", "mod")
+    c.post("/auth/telegram_code", data={"telegram_id": "222", "code": code2, "remember_me": "1"}, follow_redirects=True)
+    with c.session_transaction() as sess:
+        assert sess.permanent is True
+
+
 # ================== ТЕСТЫ RBAC (МАТРИЦА ПРАВ) ==================
 
 def test_rbac_student_restrictions(client):

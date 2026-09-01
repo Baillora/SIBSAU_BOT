@@ -40,7 +40,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=use_ssl,
     SESSION_COOKIE_SAMESITE="Strict",
-    PERMANENT_SESSION_LIFETIME=timedelta(minutes=60)
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30)
 )
 
 # CSRF защита
@@ -340,6 +340,7 @@ def login():
             session.clear()
             session["pre_2fa"] = True
             session["username"] = username
+            session["remember_me"] = bool(form.remember_me.data)
             return redirect(url_for("twofa"))
         else:
             send_owner_login_alert(
@@ -455,6 +456,7 @@ def auth_telegram_code():
 
     role = user_manager.get_role(uid)
     username = data.get("username") or str(uid)
+    remember_me = request.form.get("remember_me") in ("1", "true", "on", "checked")
 
     session.clear()
     session["logged_in"] = True
@@ -462,7 +464,7 @@ def auth_telegram_code():
     session["username"] = username
     session["role"] = role
     session["is_master_admin"] = (role == "owner")
-    session.permanent = True
+    session.permanent = remember_me
 
     send_owner_login_alert(
         is_success=True,
@@ -494,11 +496,12 @@ def twofa():
     if form.validate_on_submit():
         code = form.code.data.strip()
         if totp.verify(code):
+            remember = session.pop("remember_me", True)
             session.pop("pre_2fa", None)
             session["logged_in"] = True
             session["is_master_admin"] = True
             session["role"] = "owner"
-            session.permanent = True
+            session.permanent = bool(remember)
             set_2fa_enabled(True)
 
             send_owner_login_alert(
