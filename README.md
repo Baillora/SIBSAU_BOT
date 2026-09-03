@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v21.10-blue.svg)](https://python-telegram-bot.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.0%2B-green.svg)](https://flask.palletsprojects.com/)
-[![Tests](https://img.shields.io/badge/Tests-69%20passed-brightgreen.svg)](https://pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-79%20passed-brightgreen.svg)](https://pytest.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 **SIBSAU_BOT** — это многофункциональный Telegram-бот и защищенная веб-панель управления с ролевой моделью доступа (RBAC), разработанные для студентов и преподавателей Сибирского государственного университета науки и технологий им. М.Ф. Решетнёва.
