@@ -23,3 +23,5 @@ warning.log
 allowed_users.json
 stats.json
 notes.json
+schedule_backup.json
+invite_links.json

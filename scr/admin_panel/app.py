@@ -24,6 +24,7 @@ from scr.core.users import user_manager
 from scr.core.stats import stats_manager
 from scr.core.notes import notes_manager
 from scr.core.auth_tokens import auth_token_manager
+from scr.core.invites import invite_manager
 from scr.parsers.schedule_parser import fetch_schedule, schedule_cache
 from scr.parsers.teacher_parser import fetch_teachers, teachers_cache
 from .forms import LoginForm, TwoFAForm
@@ -761,6 +762,76 @@ def send_user_message(user_id: str):
         flash(f"❌ Ошибка: {e}", "danger")
 
     return redirect(url_for("users_page"))
+
+
+# ================== ССЫЛКИ-ПРИГЛАШЕНИЯ (INVITES) ==================
+
+@app.route("/invites", methods=["GET"])
+@role_required("owner", "admin", "mod")
+def invites_page():
+    """Просмотр всех созданных инвайт-ссылок"""
+    invites = invite_manager.get_all_invites()
+    return render_template("invites.html", invites=invites)
+
+
+@app.route("/invites/create", methods=["POST"])
+@role_required("owner", "admin", "mod")
+def invites_create():
+    """Создание новой инвайт-ссылки"""
+    current_role = get_user_role()
+    title = (request.form.get("title") or "").strip()
+    role = (request.form.get("role") or "user").strip()
+    max_uses_str = (request.form.get("max_uses") or "0").strip()
+    expires_at = (request.form.get("expires_at") or "").strip()
+
+    if not title:
+        title = "Приглашение"
+
+    # Ограничения по ролям:
+    # Модератор может создавать инвайты только с ролью 'user'
+    if current_role == "mod":
+        role = "user"
+    # Администратор может создавать 'user' и 'mod'
+    elif current_role == "admin" and role not in ("user", "mod"):
+        role = "user"
+
+    max_uses = 0
+    if max_uses_str.isdigit():
+        max_uses = int(max_uses_str)
+
+    creator_name = session.get("username") or f"{current_role}"
+    invite = invite_manager.create_invite(
+        title=title,
+        role=role,
+        max_uses=max_uses,
+        expires_at=expires_at or None,
+        created_by=creator_name
+    )
+
+    flash(f"✅ Инвайт-ссылка '{invite['title']}' успешно создана!", "success")
+    return redirect(url_for("invites_page"))
+
+
+@app.route("/invites/delete/<token>", methods=["POST"])
+@role_required("owner", "admin", "mod")
+def invites_delete(token: str):
+    """Удаление инвайт-ссылки"""
+    if invite_manager.delete_invite(token):
+        flash("Инвайт-ссылка удалена", "warning")
+    else:
+        flash("Инвайт-ссылка не найдена", "danger")
+    return redirect(url_for("invites_page"))
+
+
+@app.route("/invites/toggle/<token>", methods=["POST"])
+@role_required("owner", "admin", "mod")
+def invites_toggle(token: str):
+    """Переключение активности инвайт-ссылки (Вкл / Выкл)"""
+    if invite_manager.toggle_active(token):
+        flash("Статус инвайт-ссылки изменен", "info")
+    else:
+        flash("Инвайт-ссылка не найдена", "danger")
+    return redirect(url_for("invites_page"))
 
 
 # ================== ЛОГИ (ADMIN И OWNER) ==================

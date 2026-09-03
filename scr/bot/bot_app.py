@@ -70,6 +70,12 @@ async def setup_bot_commands(application) -> None:
             BotCommand("map", "Карта корпусов"),
         ]
         await application.bot.set_my_commands(commands)
+        try:
+            me = await application.bot.get_me()
+            if me and me.username:
+                settings.BOT_USERNAME = me.username
+        except Exception:
+            pass
         logger.info("✅ Команды бота зарегистрированы в меню Telegram")
     except Exception as e:
         logger.warning(f"Не удалось установить команды меню Telegram: {e}")
@@ -158,6 +164,8 @@ def create_bot_app():
     app.add_handler(CommandHandler("broadcast", admin.broadcast))
     app.add_handler(CommandHandler("restart", admin.restart))
     app.add_handler(CommandHandler("setpanel", admin.setpanel_command))
+    app.add_handler(CommandHandler("invite", admin.invite_command))
+    app.add_handler(CommandHandler("invites", admin.invites_command))
 
     # --- Callback-хэндлеры ---
     app.add_handler(CallbackQueryHandler(schedule.day_handler, pattern=r"^week_[12]_.+"))

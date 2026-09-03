@@ -7,7 +7,7 @@ from scr.core.users import user_manager
 from scr.core.notes import notes_manager
 from scr.core.settings import WEEKDAYS, EXPECTED_DAYS, RU_WEEKDAYS_ORDER
 from scr.core.logger import logger
-from scr.bot.handlers.utils import safe_edit_message, require_auth, format_day_schedule
+from scr.bot.handlers.utils import safe_edit_message, require_auth, format_day_schedule, format_week_schedule, split_message_markdown
 
 
 @require_auth
@@ -72,16 +72,38 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     subgroup = user_manager.get_subgroup(uid)
     week_title = week.replace('week_', 'Неделя ')
+    is_backup = bool(schedule.get("_is_backup"))
+    backup_time = schedule.get("_backup_time")
 
     if day_ru == "all":
-        text = f"📅 Расписание ({week_title}):\n\n"
-        for day in RU_WEEKDAYS_ORDER:
-            lessons = schedule.get(week, {}).get(day, [])
-            text += format_day_schedule(day, lessons, user_subgroup=subgroup)
+        week_data = schedule.get(week, {})
+        text = format_week_schedule(
+            week_title,
+            week_data,
+            user_subgroup=subgroup,
+            is_backup=is_backup,
+            backup_time=backup_time
+        )
         keyboard = [[InlineKeyboardButton("⬅ Назад", callback_data="back_to_week")]]
+
+        # Защита от лимита 4096 символов Telegram при выводе всей недели
+        if len(text) > 4000:
+            chunks = split_message_markdown(text, 4000)
+            await safe_edit_message(query, chunks[0])
+            for chunk in chunks[1:-1]:
+                await query.message.reply_text(chunk, parse_mode="Markdown")
+            await query.message.reply_text(chunks[-1], reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            logger.info(f"✅ {username} ({uid}) запросил расписание всей недели {week}.")
+            return
     else:
         lessons = schedule.get(week, {}).get(day_ru, [])
-        text = format_day_schedule(day_ru, lessons, user_subgroup=subgroup)
+        text = format_day_schedule(
+            day_ru,
+            lessons,
+            user_subgroup=subgroup,
+            is_backup=is_backup,
+            backup_time=backup_time
+        )
 
         # Проверяем заметки студента к предметам этого дня
         user_notes = notes_manager.get_user_notes(uid)
@@ -123,6 +145,7 @@ async def day_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     logger.info(f"✅ {username} ({uid}) запросил расписание: {week} → {day_ru} (подгруппа: {subgroup}).")
 
 
+
 @require_auth
 async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -143,7 +166,12 @@ async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     subgroup = user_manager.get_subgroup(uid)
     lessons = schedule.get(current_week, {}).get(day_name, [])
+    is_backup = bool(schedule.get("_is_backup"))
+    backup_time = schedule.get("_backup_time")
+
     header = f"📅 Сегодня ({date_str}, {day_name}):\n\n"
+    if is_backup and backup_time:
+        header = f"⚠️ _Сайт расписания недоступен. Копия от {backup_time}_\n\n" + header
     text = header + format_day_schedule(day_name, lessons, user_subgroup=subgroup)
 
     # Заметки
@@ -195,7 +223,12 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     subgroup = user_manager.get_subgroup(uid)
     lessons = schedule.get(week, {}).get(day_name, [])
+    is_backup = bool(schedule.get("_is_backup"))
+    backup_time = schedule.get("_backup_time")
+
     header = f"📅 Завтра ({date_str}, {day_name}):\n\n"
+    if is_backup and backup_time:
+        header = f"⚠️ _Сайт расписания недоступен. Копия от {backup_time}_\n\n" + header
     text = header + format_day_schedule(day_name, lessons, user_subgroup=subgroup)
 
     # Заметки
@@ -248,7 +281,12 @@ async def session_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     subgroup = user_manager.get_subgroup(uid)
+    is_backup = bool(schedule.get("_is_backup"))
+    backup_time = schedule.get("_backup_time")
+
     text = "📅 Сессионное расписание:\n\n"
+    if is_backup and backup_time:
+        text = f"⚠️ _Сайт расписания недоступен. Копия от {backup_time}_\n\n" + text
     for day_name_ru, lessons in schedule["session"].items():
         text += format_day_schedule(day_name_ru, lessons, user_subgroup=subgroup, empty_text="Нет экзаменов.")
 

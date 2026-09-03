@@ -385,3 +385,77 @@ async def setpanel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             parse_mode="Markdown"
         )
     logger.info(f"Владелец ({uid}) обновил адрес веб-панели: {settings.PANEL_URL or 'AUTO'}")
+
+
+@require_auth
+@require_role("mod", "admin", "owner")
+async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Создание ссылки-приглашения: /invite [название] [лимит]"""
+    from scr.core.invites import invite_manager
+    uid = update.effective_user.id
+    username = update.effective_user.username or update.effective_user.full_name
+
+    title = "Приглашение"
+    max_uses = 0
+
+    if context.args:
+        if context.args[-1].isdigit():
+            max_uses = int(context.args[-1])
+            title_parts = context.args[:-1]
+        else:
+            title_parts = context.args
+        if title_parts:
+            title = " ".join(title_parts).strip()
+
+    invite = invite_manager.create_invite(
+        title=title,
+        role="user",
+        max_uses=max_uses,
+        created_by=username
+    )
+
+    limit_str = "бесконечно" if max_uses == 0 else f"{max_uses} раз(а)"
+    all_invites = invite_manager.get_all_invites()
+    full_url = next((i["url"] for i in all_invites if i["token"] == invite["token"]), f"https://t.me/bot?start=inv_{invite['token']}")
+
+    await update.message.reply_text(
+        f"🎟 *Ссылка-приглашение успешно создана!*\n\n"
+        f"📝 Название: *{invite['title']}*\n"
+        f"👥 Лимит переходов: *{limit_str}*\n"
+        f"🎓 Роль при входе: *Студент*\n\n"
+        f"🔗 Ссылка для отправки:\n`{full_url}`\n\n"
+        f"📋 _Нажмите на ссылку, чтобы скопировать её._",
+        parse_mode="Markdown"
+    )
+    logger.info(f"{username} ({uid}) создал инвайт-ссылку {invite['token']}")
+
+
+@require_auth
+@require_role("mod", "admin", "owner")
+async def invites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Просмотр списка ссылок-приглашений: /invites"""
+    from scr.core.invites import invite_manager
+    invites = invite_manager.get_all_invites()
+    if not invites:
+        await update.message.reply_text(
+            "🎟 *Ссылки-приглашения отсутствуют.*\n"
+            "Вы можете создать новую ссылку командой:\n`/invite [название] [лимит]`",
+            parse_mode="Markdown"
+        )
+        return
+
+    lines = ["🎟 *Список ссылок-приглашений:*\n"]
+    for inv in invites[:10]:
+        status_emoji = "🟢" if inv.get("is_active") and not inv.get("is_expired") and not inv.get("is_exhausted") else "🔴"
+        limit_str = "∞" if inv.get("max_uses") == 0 else str(inv.get("max_uses"))
+        lines.append(
+            f"{status_emoji} *{inv.get('title')}*\n"
+            f"🔗 `{inv.get('url')}`\n"
+            f"📊 Использовано: {inv.get('used_count')}/{limit_str} | Срок: {inv.get('expires_at_formatted')}\n"
+        )
+
+    if len(invites) > 10:
+        lines.append(f"_... и ещё {len(invites) - 10} ссылок в веб-панели._\n")
+
+    lines.append("💡 Чтобы создать новую: `/invite [название] [лимит]`")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")

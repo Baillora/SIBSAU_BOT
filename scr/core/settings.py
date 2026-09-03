@@ -134,6 +134,40 @@ def set_panel_url(new_url: str) -> None:
     PANEL_URL = new_url.strip()
     update_env_var("PANEL_URL", PANEL_URL)
 
+# Резервная копия расписания
+SCHEDULE_BACKUP_FILE = DATA_DIR / "schedule_backup.json"
+
+# Telegram Bot Username для deep-links
+BOT_USERNAME: str = os.getenv("BOT_USERNAME", "")
+
+
+def get_bot_username() -> str:
+    """Возвращает username бота для формирования ссылок"""
+    global BOT_USERNAME
+    if BOT_USERNAME:
+        return BOT_USERNAME
+    if TOKEN and ":" in TOKEN:
+        try:
+            import httpx
+            proxy = PROXY_URL or None
+            with httpx.Client(proxy=proxy, timeout=3.0) as client:
+                res = client.get(f"https://api.telegram.org/bot{TOKEN}/getMe")
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("ok"):
+                        BOT_USERNAME = data["result"].get("username", "")
+                        return BOT_USERNAME
+        except Exception:
+            pass
+    return "sibsau_bot"
+
+
+def get_invite_link_url(token: str) -> str:
+    """Формирует полную deep-link ссылку приглашения"""
+    uname = get_bot_username()
+    return f"https://t.me/{uname}?start=inv_{token}"
+
+
 # 2FA
 TOTP_SECRET = os.getenv("TOTP_SECRET", "")
 

@@ -1,4 +1,7 @@
 import re
+import os
+import json
+import tempfile
 import datetime
 from typing import Dict, Any, Optional, Tuple, List
 import httpx
@@ -7,6 +10,7 @@ from cachetools import TTLCache
 
 from scr.core.settings import (
     SCHEDULE_URL,
+    SCHEDULE_BACKUP_FILE,
     WEEKDAYS,
     EXPECTED_DAYS,
     LESSON_SCHEDULE,
@@ -19,6 +23,54 @@ from scr.core.logger import logger
 
 # TTL-кэш для расписания
 schedule_cache = TTLCache(maxsize=100, ttl=CACHE_EXPIRY)
+
+
+def save_schedule_backup(schedule: Dict[str, Any]) -> None:
+    """Сохраняет успешную копию расписания на диск в schedule_backup.json"""
+    try:
+        clean_data = {}
+        for k, v in schedule.items():
+            if not k.startswith("_"):
+                clean_data[k] = v
+        if "_current_week" in schedule:
+            clean_data["_current_week"] = schedule["_current_week"]
+
+        now = datetime.datetime.now(BOT_TIMEZONE)
+        payload = {
+            "saved_at": now.isoformat(),
+            "saved_at_formatted": now.strftime("%d.%m.%Y в %H:%M"),
+            "schedule": clean_data
+        }
+        SCHEDULE_BACKUP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=SCHEDULE_BACKUP_FILE.parent, prefix="sched_bak_", suffix=".tmp"
+        )
+        with open(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, SCHEDULE_BACKUP_FILE)
+        logger.info(f"💾 Резервная копия расписания успешно сохранена в {SCHEDULE_BACKUP_FILE}")
+    except Exception as e:
+        logger.error(f"Не удалось сохранить резервную копию расписания: {e}")
+
+
+def load_schedule_backup() -> Optional[Dict[str, Any]]:
+    """Загружает резервную копию расписания с диска, если сайт недоступен"""
+    if not SCHEDULE_BACKUP_FILE.exists():
+        return None
+    try:
+        with open(SCHEDULE_BACKUP_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        sched = data.get("schedule", {})
+        if sched:
+            sched["_is_backup"] = True
+            sched["_backup_time"] = data.get("saved_at_formatted", "ранее")
+            logger.warning(f"⚠️ Использована резервная копия расписания от {sched['_backup_time']}")
+            return sched
+    except Exception as e:
+        logger.error(f"Ошибка загрузки резервной копии расписания: {e}")
+    return None
 
 
 def extract_time(raw_text: str) -> str:
@@ -93,6 +145,13 @@ async def fetch_schedule(application=None) -> Dict[str, Any]:
 
     if not SCHEDULE_URL:
         logger.warning("SCHEDULE_URL не задан в конфигурации.")
+        if len(schedule_cache) > 0:
+            return dict(schedule_cache)
+        backup = load_schedule_backup()
+        if backup:
+            for k, v in backup.items():
+                schedule_cache[k] = v
+            return backup
         return dict(schedule_cache)
 
     logger.info("Обновление расписания с сайта.")
@@ -103,9 +162,17 @@ async def fetch_schedule(application=None) -> Dict[str, Any]:
             response = await client.get(SCHEDULE_URL)
             response.raise_for_status()
             content = response.content
-    except httpx.RequestError as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.error(f"Ошибка при получении страницы расписания: {e}")
         await notify_admin(application, f"Ошибка при получении страницы расписания: {e}")
+        if len(schedule_cache) > 0:
+            return dict(schedule_cache)
+        backup = load_schedule_backup()
+        if backup:
+            schedule_cache.clear()
+            for k, v in backup.items():
+                schedule_cache[k] = v
+            return backup
         return dict(schedule_cache)
 
     soup = BeautifulSoup(content, "html.parser")
@@ -192,11 +259,22 @@ async def fetch_schedule(application=None) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Ошибка при парсинге расписания: {e}")
         await notify_admin(application, f"Ошибка при парсинге расписания: {e}")
+        if len(schedule_cache) > 0:
+            return dict(schedule_cache)
+        backup = load_schedule_backup()
+        if backup:
+            schedule_cache.clear()
+            for k, v in backup.items():
+                schedule_cache[k] = v
+            return backup
         return dict(schedule_cache)
 
     schedule_cache.clear()
     for k, v in schedule.items():
         schedule_cache[k] = v
+
+    # Сохраняем в резервную копию на диск
+    save_schedule_backup(schedule)
 
     logger.info("Расписание успешно обновлено.")
     return dict(schedule_cache)

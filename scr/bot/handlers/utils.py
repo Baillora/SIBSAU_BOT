@@ -168,16 +168,94 @@ def format_day_schedule(
     day_title: str,
     lessons: List[Dict[str, Any]],
     user_subgroup: str = "all",
-    empty_text: str = "Нет пар."
+    empty_text: str = "Нет пар.",
+    is_backup: bool = False,
+    backup_time: Optional[str] = None
 ) -> str:
     """Форматирует расписание на конкретный день"""
-    text = f"🔹 {day_title}:\n\n"
+    prefix = ""
+    if is_backup and backup_time:
+        prefix = f"⚠️ _Сайт расписания недоступен. Копия от {backup_time}_\n\n"
+    text = f"{prefix}🔹 {day_title}:\n\n"
     formatted = format_lessons(lessons, user_subgroup=user_subgroup)
     if formatted:
         text += formatted + "\n"
     else:
         text += f"{empty_text}\n"
     return text
+
+
+def format_week_schedule(
+    week_title: str,
+    week_data: Dict[str, List[Dict[str, Any]]],
+    user_subgroup: str = "all",
+    is_backup: bool = False,
+    backup_time: Optional[str] = None
+) -> str:
+    """
+    Красиво и наглядно форматирует расписание на всю неделю с четкими визуальными разделителями между днями.
+    """
+    from scr.core.settings import RU_WEEKDAYS_ORDER
+
+    header = f"📅 *Расписание ({week_title})*\n"
+    if is_backup and backup_time:
+        header += f"⚠️ _Сайт расписания недоступен. Копия от {backup_time}_\n"
+
+    sections = [header]
+
+    for day in RU_WEEKDAYS_ORDER:
+        lessons = week_data.get(day, [])
+        formatted = format_lessons(lessons, user_subgroup=user_subgroup)
+
+        day_block = []
+        day_block.append("━━━━━━━━━━━━━━━━━━━━")
+        day_block.append(f"🗓 *{day.upper()}*")
+        day_block.append("")
+
+        if formatted:
+            day_block.append(formatted)
+        else:
+            day_block.append("✨ _Пар нет — выходной_")
+
+        sections.append("\n".join(day_block))
+
+    return "\n\n".join(sections).strip()
+
+
+def require_auth(func: Callable) -> Callable:
+    """Декоратор для проверки авторизации пользователя"""
+    @functools.wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        if not user:
+            return
+
+        uid = user.id
+        username = user.username or user.full_name
+
+        # Логируем активность
+        stats_manager.record_activity(uid, is_command=bool(update.message and update.message.text and update.message.text.startswith("/")))
+        stats_manager.save()
+
+async def send_unauthorized_message(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
+    """Отправляет стандартное сообщение для неавторизованного пользователя"""
+    owner_contact = "администратору"
+    try:
+        owner_user = await context.bot.get_chat(OWNER_ID) if OWNER_ID else None
+        if owner_user and owner_user.username:
+            owner_contact = f"@{owner_user.username}"
+        elif OWNER_ID:
+            owner_contact = f"ID: `{OWNER_ID}`"
+    except Exception:
+        owner_contact = "администратору"
+
+    if update.message:
+        await update.message.reply_text(
+            f"Ваш ID: `{uid}`\n\n"
+            f"Для использования бота сообщите ваш ID администратору ({owner_contact}).\n\n"
+            f"Администратор {owner_contact}",
+            parse_mode="Markdown"
+        )
 
 
 def require_auth(func: Callable) -> Callable:
@@ -201,22 +279,7 @@ def require_auth(func: Callable) -> Callable:
                 await update.callback_query.answer("У вас нет доступа к боту.", show_alert=True)
                 return
             elif update.message:
-                owner_contact = "администратору"
-                try:
-                    owner_user = await context.bot.get_chat(OWNER_ID) if OWNER_ID else None
-                    if owner_user and owner_user.username:
-                        owner_contact = f"@{owner_user.username}"
-                    elif OWNER_ID:
-                        owner_contact = f"ID: `{OWNER_ID}`"
-                except Exception:
-                    owner_contact = "администратору"
-
-                await update.message.reply_text(
-                    f"Ваш ID: `{uid}`\n\n"
-                    f"Для использования бота сообщите ваш ID администратору ({owner_contact}).\n\n"
-                    f"Администратор {owner_contact}",
-                    parse_mode="Markdown"
-                )
+                await send_unauthorized_message(update, context, uid)
                 return
 
         return await func(update, context, *args, **kwargs)

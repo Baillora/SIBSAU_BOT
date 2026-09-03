@@ -44,6 +44,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/adduser <user_id> - Добавить пользователя (Студента)",
         "/removeuser <user_id> - Удалить пользователя",
         "/listusers - Показать список пользователей",
+        "/invite [название] [лимит] - Создать инвайт-ссылку",
+        "/invites - Список активных инвайт-ссылок",
         "/reload - Перезагрузить кэш расписания"
     ]
 

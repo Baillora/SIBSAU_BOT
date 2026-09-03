@@ -9,7 +9,8 @@ from scr.parsers.schedule_parser import (
 from scr.core.settings import LESSON_SCHEDULE, BOT_TIMEZONE
 from scr.core.users import user_manager
 from scr.core.logger import logger
-from scr.bot.handlers.utils import safe_edit_message, require_auth, render_progress_bar
+from scr.core.invites import invite_manager
+from scr.bot.handlers.utils import safe_edit_message, require_auth, render_progress_bar, send_unauthorized_message
 
 
 async def build_start_payload(user_id: int, context: ContextTypes.DEFAULT_TYPE):
@@ -111,13 +112,45 @@ async def build_start_payload(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     return welcome_message, InlineKeyboardMarkup(keyboard)
 
 
-@require_auth
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик команды /start"""
-    uid = update.effective_user.id
-    username = update.effective_user.username or update.effective_user.full_name
-    role = user_manager.get_role(uid)
+    """Обработчик команды /start с поддержкой ссылок-приглашений"""
+    user = update.effective_user
+    if not user:
+        return
 
+    uid = user.id
+    username = user.username or user.full_name
+
+    # 1. Проверяем deep-link инвайты (/start inv_XXXXX или /start invite_XXXXX)
+    if context.args and len(context.args) > 0:
+        arg = context.args[0].strip()
+        if arg.startswith("inv_") or arg.startswith("invite_"):
+            token = arg.split("_", 1)[1]
+            success, msg, inv_data = invite_manager.use_invite(token, uid, username)
+            if success and inv_data:
+                role_label = "🎓 Студент" if inv_data.get("role") == "user" else inv_data.get("role")
+                if update.message:
+                    await update.message.reply_text(
+                        f"🎉 *Добро пожаловать в бота!*\n\n"
+                        f"Вы успешно авторизованы по приглашению: *{inv_data.get('title')}*\n"
+                        f"Ваш ранг в системе: *{role_label}*.\n\n"
+                        f"Приятного пользования!",
+                        parse_mode="Markdown"
+                    )
+            else:
+                if update.message:
+                    await update.message.reply_text(
+                        f"❌ *Не удалось активировать приглашение:*\n{msg}\n",
+                        parse_mode="Markdown"
+                    )
+
+    # 2. Проверяем авторизацию
+    if not user_manager.is_allowed(uid):
+        logger.warning(f"❌ Неавторизованный пользователь {username} ({uid}) вызвал /start.")
+        await send_unauthorized_message(update, context, uid)
+        return
+
+    role = user_manager.get_role(uid)
     logger.info(f"✅ {username} ({uid}) [{role}] вызвал /start.")
     welcome_message, markup = await build_start_payload(uid, context)
 

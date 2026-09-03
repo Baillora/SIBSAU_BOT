@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-11">
+    <!-- Заголовок и кнопка создания -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+      <div>
+        <h2 class="fw-bold mb-1"><i class="fa-solid fa-ticket text-primary me-2"></i>Ссылки-приглашения</h2>
+        <p class="text-muted mb-0">Создание и управление ссылками для автоматической авторизации пользователей в Telegram-боте</p>
+      </div>
+      <div>
+        <button type="button" class="btn btn-primary px-3 py-2 fw-semibold shadow-sm" data-bs-toggle="modal" data-bs-target="#createInviteModal">
+          <i class="fa-solid fa-plus me-1"></i> Создать ссылку
+        </button>
+      </div>
+    </div>
+
+    <!-- Карточки статистики -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-3 bg-body-tertiary">
+          <div class="d-flex align-items-center">
+            <div class="rounded-3 p-3 bg-primary-subtle text-primary me-3">
+              <i class="fa-solid fa-link fa-2x"></i>
+            </div>
+            <div>
+              <div class="text-muted small">Всего ссылок</div>
+              <h3 class="fw-bold mb-0">{{ invites|length }}</h3>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-3 bg-body-tertiary">
+          <div class="d-flex align-items-center">
+            <div class="rounded-3 p-3 bg-success-subtle text-success me-3">
+              <i class="fa-solid fa-circle-check fa-2x"></i>
+            </div>
+            <div>
+              <div class="text-muted small">Активных ссылок</div>
+              <h3 class="fw-bold mb-0">
+                {{ invites|selectattr('is_active')|rejectattr('is_expired', 'defined')|rejectattr('is_exhausted', 'defined')|list|length }}
+              </h3>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-3 bg-body-tertiary">
+          <div class="d-flex align-items-center">
+            <div class="rounded-3 p-3 bg-info-subtle text-info me-3">
+              <i class="fa-solid fa-user-plus fa-2x"></i>
+            </div>
+            <div>
+              <div class="text-muted small">Всего авторизовано через ссылки</div>
+              <h3 class="fw-bold mb-0">
+                {{ invites|map(attribute='used_count')|sum }}
+              </h3>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Таблица ссылок -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-body-tertiary fw-bold py-3">
+        <i class="fa-solid fa-list me-2 text-primary"></i>Список ссылок-приглашений
+      </div>
+      <div class="card-body p-0">
+        {% if invites %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Название</th>
+                <th>Ссылка для приглашения</th>
+                <th>Роль</th>
+                <th>Использовано</th>
+                <th>Срок действия</th>
+                <th>Статус</th>
+                <th>Вступившие</th>
+                <th class="text-end pe-4">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for inv in invites %}
+              <tr>
+                <!-- Название -->
+                <td class="fw-semibold">
+                  {{ inv.title }}
+                  <div class="text-muted small font-monospace">Создан: {{ inv.created_at_formatted }}</div>
+                </td>
+
+                <!-- Ссылка с кнопкой копирования -->
+                <td style="min-width: 260px;">
+                  <div class="input-group input-group-sm">
+                    <input type="text" class="form-control font-monospace form-control-sm" value="{{ inv.url }}" id="url_{{ inv.token }}" readonly>
+                    <button class="btn btn-outline-primary copy-btn" type="button" onclick="copyLink('{{ inv.url }}', this)" title="Скопировать ссылку">
+                      <i class="fa-solid fa-copy"></i>
+                    </button>
+                  </div>
+                </td>
+
+                <!-- Роль -->
+                <td>
+                  {% if inv.role == 'owner' %}
+                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">👑 Владелец</span>
+                  {% elif inv.role == 'admin' %}
+                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle">🛡️ Админ</span>
+                  {% elif inv.role == 'mod' %}
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle">👮 Модератор</span>
+                  {% else %}
+                    <span class="badge bg-info-subtle text-info border border-info-subtle">🎓 Студент</span>
+                  {% endif %}
+                </td>
+
+                <!-- Использовано / Лимит -->
+                <td>
+                  <span class="fw-bold">{{ inv.used_count }}</span>
+                  <span class="text-muted">/ {% if inv.max_uses == 0 %}∞{% else %}{{ inv.max_uses }}{% endif %}</span>
+                </td>
+
+                <!-- Срок действия -->
+                <td>
+                  {% if inv.expires_at %}
+                    <span class="small font-monospace">{{ inv.expires_at_formatted }}</span>
+                  {% else %}
+                    <span class="badge bg-secondary-subtle text-secondary">Бессрочно</span>
+                  {% endif %}
+                </td>
+
+                <!-- Статус -->
+                <td>
+                  {% if not inv.is_active %}
+                    <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Отключена</span>
+                  {% elif inv.is_expired %}
+                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Истекла</span>
+                  {% elif inv.is_exhausted %}
+                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle">Исчерпана</span>
+                  {% else %}
+                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                      <i class="fa-solid fa-check me-1"></i> Активна
+                    </span>
+                  {% endif %}
+                </td>
+
+                <!-- Вступившие пользователи -->
+                <td>
+                  {% if inv.used_by %}
+                    <button type="button" class="btn btn-outline-info btn-sm py-0 px-2" data-bs-toggle="modal" data-bs-target="#usersModal_{{ inv.token }}">
+                      <i class="fa-solid fa-users me-1"></i> {{ inv.used_by|length }}
+                    </button>
+
+                    <!-- Модальное окно со списком вступивших -->
+                    <div class="modal fade" id="usersModal_{{ inv.token }}" tabindex="-1" aria-hidden="true">
+                      <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                          <div class="modal-header">
+                            <h5 class="modal-title fw-bold">
+                              <i class="fa-solid fa-users text-primary me-2"></i>Вступившие по ссылке: {{ inv.title }}
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                          </div>
+                          <div class="modal-body p-0">
+                            <ul class="list-group list-group-flush">
+                              {% for u in inv.used_by %}
+                              <li class="list-group-item d-flex justify-content-between align-items-center py-2 px-3">
+                                <div>
+                                  <div class="fw-semibold">{{ u.username }}</div>
+                                  <div class="text-muted small font-monospace">ID: {{ u.user_id }}</div>
+                                </div>
+                                <span class="badge bg-body-secondary text-secondary small">{{ u.used_at }}</span>
+                              </li>
+                              {% endfor %}
+                            </ul>
+                          </div>
+                          <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Закрыть</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  {% else %}
+                    <span class="text-muted small">—</span>
+                  {% endif %}
+                </td>
+
+                <!-- Действия -->
+                <td class="text-end pe-4">
+                  <div class="btn-group btn-group-sm">
+                    <!-- Переключить активность -->
+                    <form method="post" action="{{ url_for('invites_toggle', token=inv.token) }}" class="d-inline">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-outline-secondary" title="{% if inv.is_active %}Деактивировать{% else %}Активировать{% endif %}">
+                        <i class="fa-solid {% if inv.is_active %}fa-pause text-warning{% else %}fa-play text-success{% endif %}"></i>
+                      </button>
+                    </form>
+
+                    <!-- Удалить -->
+                    <form method="post" action="{{ url_for('invites_delete', token=inv.token) }}" class="d-inline" onsubmit="return confirm('Удалить эту ссылку-приглашение?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-outline-danger" title="Удалить ссылку">
+                        <i class="fa-solid fa-trash"></i>
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-5 text-center text-muted">
+          <i class="fa-solid fa-ticket-simple fa-3x mb-3 text-secondary"></i>
+          <h5>Нет созданных ссылок-приглашений</h5>
+          <p class="small mb-3">Создайте ссылку, чтобы пользователи могли вступить в бота без ручного добавления по ID.</p>
+          <button type="button" class="btn btn-primary btn-sm px-3 py-2 fw-semibold" data-bs-toggle="modal" data-bs-target="#createInviteModal">
+            <i class="fa-solid fa-plus me-1"></i> Создать первую ссылку
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Модальное окно создания ссылки -->
+<div class="modal fade" id="createInviteModal" tabindex="-1" aria-labelledby="createInviteModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('invites_create') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold" id="createInviteModalLabel">
+            <i class="fa-solid fa-plus-circle text-primary me-2"></i>Новая ссылка-приглашение
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body p-4">
+          <!-- Название -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Название / Описание <span class="text-danger">*</span></label>
+            <input type="text" name="title" class="form-control" placeholder="Например: Для группы ИБ-22 или Для старост" required>
+            <div class="form-text small">Понятное название для идентификации ссылки.</div>
+          </div>
+
+          <!-- Роль -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Назначаемая роль</label>
+            <select name="role" class="form-select">
+              <option value="user" selected>🎓 Студент (Стандартный доступ)</option>
+              {% if current_role in ('owner', 'admin') %}
+              <option value="mod">👮 Модератор (Управление расписанием и студентами)</option>
+              {% endif %}
+              {% if current_role == 'owner' %}
+              <option value="admin">🛡️ Администратор</option>
+              {% endif %}
+            </select>
+            <div class="form-text small">Какую роль получит пользователь при переходе по ссылке.</div>
+          </div>
+
+          <!-- Лимит использований -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Количество использований</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fa-solid fa-users"></i></span>
+              <input type="number" name="max_uses" class="form-control" value="0" min="0" placeholder="0">
+            </div>
+            <div class="form-text small">Укажите <code>0</code> для <strong>бесконечного</strong> количества использований, либо конкретное число (например, 25).</div>
+          </div>
+
+          <!-- Срок действия -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Срок действия (необязательно)</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="fa-solid fa-calendar"></i></span>
+              <input type="datetime-local" name="expires_at" class="form-control">
+            </div>
+            <div class="form-text small">Оставьте пустым для бессрочной ссылки.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary fw-semibold px-4">
+            <i class="fa-solid fa-check me-1"></i> Создать ссылку
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  function copyLink(text, btn) {
+    navigator.clipboard.writeText(text).then(function() {
+      const originalHTML = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-check text-success"></i>';
+      btn.classList.add('btn-success');
+      btn.classList.remove('btn-outline-primary');
+      setTimeout(function() {
+        btn.innerHTML = originalHTML;
+        btn.classList.remove('btn-success');
+        btn.classList.add('btn-outline-primary');
+      }, 2000);
+    }).catch(function(err) {
+      alert("Не удалось скопировать: " + err);
+    });
+  }
+</script>
+{% endblock %}
