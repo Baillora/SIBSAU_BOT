@@ -71,3 +71,30 @@ async def test_showlog_success(mock_settings):
     context.args = ["5"]
     await showlog(update, context)
     update.message.reply_text.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_setweek_command(mock_settings):
+    from scr.bot.handlers.admin import setweek_command
+    import scr.core.settings as settings
+    owner_id = mock_settings["owner_id"]
+
+    # 1. Без аргументов - справка
+    update, context, bot = create_mock_update(owner_id, "/setweek")
+    context.args = []
+    await setweek_command(update, context)
+    assert "Управление четностью недели" in update.message.reply_text.call_args[0][0]
+
+    # 2. Установка 2-й недели
+    update, context, bot = create_mock_update(owner_id, "/setweek")
+    context.args = ["2"]
+    await setweek_command(update, context)
+    assert settings.WEEK_OVERRIDE == "week_2"
+    assert "переключена на 2-ю неделю" in update.message.reply_text.call_args[0][0]
+
+    # 3. Сброс на auto
+    update, context, bot = create_mock_update(owner_id, "/setweek")
+    context.args = ["auto"]
+    await setweek_command(update, context)
+    assert settings.WEEK_OVERRIDE == ""
+    assert "Сброшено на автоопределение недели" in update.message.reply_text.call_args[0][0]

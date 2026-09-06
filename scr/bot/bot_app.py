@@ -24,7 +24,8 @@ bot_app = None
 async def send_daily_digest(context) -> None:
     """Утренняя рассылка расписания подписанным пользователям"""
     try:
-        schedule_data = await fetch_schedule(context.application)
+        # Принудительно обновляем расписание с сайта перед рассылкой
+        schedule_data = await fetch_schedule(context.application, force_refresh=True)
         date_str, day_name, current_week = get_current_week_and_day(schedule_data)
         if not schedule_data or not current_week or current_week not in schedule_data:
             return
@@ -166,6 +167,7 @@ def create_bot_app():
     app.add_handler(CommandHandler("setpanel", admin.setpanel_command))
     app.add_handler(CommandHandler("invite", admin.invite_command))
     app.add_handler(CommandHandler("invites", admin.invites_command))
+    app.add_handler(CommandHandler("setweek", admin.setweek_command))
 
     # --- Callback-хэндлеры ---
     app.add_handler(CallbackQueryHandler(schedule.day_handler, pattern=r"^week_[12]_.+"))

@@ -19,6 +19,7 @@ from scr.core.settings import (
     BOT_TIMEZONE,
     get_semester_start_date,
 )
+import scr.core.settings as settings
 from scr.core.logger import logger
 
 # TTL-кэш для расписания
@@ -32,8 +33,9 @@ def save_schedule_backup(schedule: Dict[str, Any]) -> None:
         for k, v in schedule.items():
             if not k.startswith("_"):
                 clean_data[k] = v
-        if "_current_week" in schedule:
-            clean_data["_current_week"] = schedule["_current_week"]
+        for meta_k in ("_current_week", "_site_header_date", "_site_base_week"):
+            if meta_k in schedule:
+                clean_data[meta_k] = schedule[meta_k]
 
         now = datetime.datetime.now(BOT_TIMEZONE)
         payload = {
@@ -137,9 +139,9 @@ def _append_lesson(schedule: Dict[str, Any], week_key: str, day_name_ru: str, ti
     })
 
 
-async def fetch_schedule(application=None) -> Dict[str, Any]:
+async def fetch_schedule(application=None, force_refresh: bool = False) -> Dict[str, Any]:
     """Парсинг расписания с сайта СИБГУ"""
-    if len(schedule_cache) > 0:
+    if not force_refresh and len(schedule_cache) > 0:
         logger.info("Используется кэш расписания (TTLCache).")
         return dict(schedule_cache)
 
@@ -182,10 +184,33 @@ async def fetch_schedule(application=None) -> Dict[str, Any]:
         week_header = soup.find("h4", class_="text-center")
         if week_header:
             header_text = week_header.get_text()
-            if "1 неделя" in header_text:
-                schedule["_current_week"] = "week_1"
-            elif "2 неделя" in header_text:
-                schedule["_current_week"] = "week_2"
+
+            # Проверяем формат с датой: "06.09.2026 - 1 неделя"
+            date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d)\s*неделя", header_text, re.IGNORECASE)
+            if date_match:
+                try:
+                    site_date = datetime.datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
+                    site_week_num = int(date_match.group(2))
+                    today_local = datetime.datetime.now(BOT_TIMEZONE).date()
+
+                    site_monday = site_date - datetime.timedelta(days=site_date.weekday())
+                    today_monday = today_local - datetime.timedelta(days=today_local.weekday())
+                    weeks_diff = (today_monday - site_monday).days // 7
+
+                    calc_week_num = (site_week_num + weeks_diff - 1) % 2 + 1
+                    schedule["_current_week"] = f"week_{calc_week_num}"
+                    schedule["_site_header_date"] = site_date.strftime("%d.%m.%Y")
+                    schedule["_site_base_week"] = site_week_num
+                    logger.info(f"Активная неделя рассчитана с учетом даты сайта ({site_date}, {site_week_num} нед) -> {schedule['_current_week']}")
+                except Exception as e:
+                    logger.warning(f"Ошибка вычисления недели по дате сайта: {e}")
+
+            if "_current_week" not in schedule:
+                if "1 неделя" in header_text:
+                    schedule["_current_week"] = "week_1"
+                elif "2 неделя" in header_text:
+                    schedule["_current_week"] = "week_2"
+
 
         for week_num in [1, 2]:
             week_key = f"week_{week_num}"
@@ -288,14 +313,40 @@ def get_current_week_and_day(schedule: Optional[Dict[str, Any]] = None) -> Tuple
         weekday_en = today.strftime("%A")
         day_name_ru = WEEKDAYS.get(weekday_en, weekday_en)
 
-        # Если есть кэшированная активная неделя с сайта
-        if schedule and "_current_week" in schedule:
-            current_week = schedule["_current_week"]
-        elif "_current_week" in schedule_cache:
-            current_week = schedule_cache["_current_week"]
-        else:
+        # 0. Ручной оверрайд от администратора (/setweek)
+        override = getattr(settings, "WEEK_OVERRIDE", "")
+        if override in ("week_1", "week_2"):
+            return today.strftime("%d.%m.%Y"), day_name_ru, override
+
+        current_week = None
+
+        # 1. Динамический пересчет, если в расписании есть дата шапки сайта и базовая неделя
+        source = schedule if schedule else schedule_cache
+        if source and "_site_header_date" in source and "_site_base_week" in source:
+            try:
+                site_date = datetime.datetime.strptime(source["_site_header_date"], "%d.%m.%Y").date()
+                site_week_num = int(source["_site_base_week"])
+                site_monday = site_date - datetime.timedelta(days=site_date.weekday())
+                today_monday = today - datetime.timedelta(days=today.weekday())
+                weeks_diff = (today_monday - site_monday).days // 7
+                calc_week_num = (site_week_num + weeks_diff - 1) % 2 + 1
+                current_week = f"week_{calc_week_num}"
+            except Exception as e:
+                logger.warning(f"Ошибка пересчета недели по дате: {e}")
+
+        # 2. Если есть статическая неделя
+        if not current_week:
+            if schedule and "_current_week" in schedule:
+                current_week = schedule["_current_week"]
+            elif "_current_week" in schedule_cache:
+                current_week = schedule_cache["_current_week"]
+
+        # 3. Академический расчет по учебным неделям с понедельника по воскресенье
+        if not current_week:
             semester_start = get_semester_start_date(today)
-            delta_weeks = (today - semester_start).days // 7
+            semester_monday = semester_start - datetime.timedelta(days=semester_start.weekday())
+            today_monday = today - datetime.timedelta(days=today.weekday())
+            delta_weeks = (today_monday - semester_monday).days // 7
             current_week = "week_1" if delta_weeks % 2 == 0 else "week_2"
 
         return today.strftime("%d.%m.%Y"), day_name_ru, current_week

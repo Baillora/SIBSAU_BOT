@@ -9,7 +9,7 @@ from scr.core.stats import stats_manager
 from scr.core.settings import OWNER_ID, LOG_FILE, get_panel_base_url
 import scr.core.settings as settings
 from scr.core.logger import logger
-from scr.parsers.schedule_parser import fetch_schedule, schedule_cache
+from scr.parsers.schedule_parser import fetch_schedule, schedule_cache, get_current_week_and_day
 from scr.parsers.teacher_parser import fetch_teachers, teachers_cache
 from scr.bot.handlers.utils import require_auth, require_role, split_message_markdown
 
@@ -459,3 +459,57 @@ async def invites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     lines.append("💡 Чтобы создать новую: `/invite [название] [лимит]`")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+@require_auth
+@require_role("admin", "owner")
+async def setweek_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Принудительное переопределение активной недели: /setweek [1|2|auto]"""
+    uid = update.effective_user.id
+    username = update.effective_user.username or update.effective_user.full_name
+
+    if not context.args:
+        current_override = settings.WEEK_OVERRIDE or "автоопределение"
+        await update.message.reply_text(
+            f"📅 *Управление четностью недели*\n\n"
+            f"Текущий режим: *{current_override}*\n\n"
+            f"Использование:\n"
+            f"`/setweek 1` — Принудительно включить 1-ю неделю\n"
+            f"`/setweek 2` — Принудительно включить 2-ю неделю\n"
+            f"`/setweek auto` — Сбросить на автоопределение с сайта/календаря",
+            parse_mode="Markdown"
+        )
+        return
+
+    arg = context.args[0].strip().lower()
+    if arg in ("1", "week_1"):
+        settings.set_week_override("week_1")
+        await update.message.reply_text(
+            "✅ *Активная неделя переключена на 1-ю неделю!*\n"
+            "💾 _Настройка сохранена в .env_",
+            parse_mode="Markdown"
+        )
+    elif arg in ("2", "week_2"):
+        settings.set_week_override("week_2")
+        await update.message.reply_text(
+            "✅ *Активная неделя переключена на 2-ю неделю!*\n"
+            "💾 _Настройка сохранена в .env_",
+            parse_mode="Markdown"
+        )
+    elif arg in ("auto", "clear", "reset", "0"):
+        settings.set_week_override("")
+        schedule_cache.clear()
+        schedule_data = await fetch_schedule(context.application, force_refresh=True)
+        _, _, calc_week = get_current_week_and_day(schedule_data)
+        calc_label = "1-ая неделя" if calc_week == "week_1" else "2-ая неделя"
+        await update.message.reply_text(
+            f"✅ *Сброшено на автоопределение недели!*\n"
+            f"📅 Текущая рассчитанная неделя: *{calc_label}*\n"
+            f"💾 _Настройка сохранена в .env_",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("Неверный аргумент. Используйте: `/setweek 1`, `/setweek 2` или `/setweek auto`", parse_mode="Markdown")
+        return
+
+    logger.info(f"{username} ({uid}) изменил режим недели на {settings.WEEK_OVERRIDE or 'auto'}")

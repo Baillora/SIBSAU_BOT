@@ -98,3 +98,34 @@ async def test_fetch_schedule_mock(monkeypatch):
     assert lessons[0]["time"] == "08:00-09:30"
     assert "Физика" in lessons[0]["info"]
     assert lessons[0]["classroom"] == "каб. Л-100"
+
+
+def test_week_transition_with_delayed_site_header():
+    # Ситуация пользователя: на сайте шапка еще от воскресенья "06.09.2026 - 1 неделя",
+    # а сегодня уже понедельник 07.09.2026 (новая неделя)
+    schedule_data = {
+        "_site_header_date": "06.09.2026",
+        "_site_base_week": 1,
+        "_current_week": "week_1"
+    }
+    date_str, day_name, current_week = get_current_week_and_day(schedule_data)
+    assert current_week == "week_2"
+
+
+def test_academic_monday_based_calculation():
+    # Очищаем кэш, чтобы протестировать чистый расчет по дате (без кэшированных заголовков)
+    schedule_cache.clear()
+    date_str, day_name, current_week = get_current_week_and_day({})
+    assert current_week == "week_2"
+
+
+def test_week_override(monkeypatch):
+    import scr.core.settings as settings
+    monkeypatch.setattr(settings, "WEEK_OVERRIDE", "week_1")
+    _, _, w1 = get_current_week_and_day()
+    assert w1 == "week_1"
+
+    monkeypatch.setattr(settings, "WEEK_OVERRIDE", "week_2")
+    _, _, w2 = get_current_week_and_day()
+    assert w2 == "week_2"
+

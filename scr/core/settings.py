@@ -137,6 +137,23 @@ def set_panel_url(new_url: str) -> None:
 # Резервная копия расписания
 SCHEDULE_BACKUP_FILE = DATA_DIR / "schedule_backup.json"
 
+# Ручное переопределение четности недели ("week_1", "week_2", "" - авто)
+WEEK_OVERRIDE: str = os.getenv("WEEK_OVERRIDE", "").strip().lower()
+
+
+def set_week_override(val: str) -> None:
+    """Установка или сброс ручного переопределения активной недели"""
+    global WEEK_OVERRIDE
+    val = val.strip().lower()
+    if val in ("week_1", "1", "1 неделя"):
+        WEEK_OVERRIDE = "week_1"
+    elif val in ("week_2", "2", "2 неделя"):
+        WEEK_OVERRIDE = "week_2"
+    else:
+        WEEK_OVERRIDE = ""
+    update_env_var("WEEK_OVERRIDE", WEEK_OVERRIDE)
+
+
 # Telegram Bot Username для deep-links
 BOT_USERNAME: str = os.getenv("BOT_USERNAME", "")
 
